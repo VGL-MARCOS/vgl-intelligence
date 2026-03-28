@@ -149,35 +149,63 @@ def get_pdf():
 # ─────────────────────────────────────────────
 #  CACHE DE DADOS (evita rebuscar a cada clique)
 # ─────────────────────────────────────────────
-@st.cache_data(ttl=300, show_spinner=False)  # cache por 5 minutos
-def buscar_equipamentos():
-    return get_crti().buscar_equipamentos()
+@st.cache_data(ttl=3600, show_spinner=False)  # 1 hora — filiais mudam raramente
+def buscar_filiais():
+    """Busca lista de filiais via contas correntes (campo filial)."""
+    try:
+        contas = get_crti().buscar_contas_correntes(apenas_ativas=True)
+        filiais = {}
+        for c in contas:
+            f = c.get("filial") or {}
+            fid = f.get("id")
+            fnome = f.get("nome", "")
+            if fid and fnome:
+                filiais[fid] = fnome
+        return filiais  # {id: nome}
+    except:
+        return {}
 
-@st.cache_data(ttl=300, show_spinner=False)
-def buscar_os(inicio, fim):
-    return get_crti().buscar_os_manutencao(data_abertura_de=inicio, data_abertura_ate=fim)
+@st.cache_data(ttl=1800, show_spinner=False)  # 30 min — cadastro muda pouco
+def buscar_equipamentos(filial_id=None):
+    return get_crti().buscar_equipamentos(filial_atual=filial_id)
 
-@st.cache_data(ttl=300, show_spinner=False)
-def buscar_transferencias(inicio, fim):
-    return get_crti().buscar_transferencias(inicio, fim)
+@st.cache_data(ttl=600, show_spinner=False)
+def buscar_os(inicio, fim, filiais_ids=None):
+    return get_crti().buscar_os_manutencao(
+        data_abertura_de=inicio, data_abertura_ate=fim,
+        filiais_oficina=filiais_ids or None
+    )
 
-@st.cache_data(ttl=300, show_spinner=False)
-def buscar_compras(inicio, fim):
+@st.cache_data(ttl=600, show_spinner=False)
+def buscar_transferencias(inicio, fim, filiais_ids=None):
+    return get_crti().buscar_transferencias(
+        inicio, fim,
+        filial_ids=filiais_ids or None
+    )
+
+@st.cache_data(ttl=600, show_spinner=False)
+def buscar_compras(inicio, fim, filiais_ids=None):
     return get_crti().buscar_compras_periodo(inicio, fim)
 
-@st.cache_data(ttl=300, show_spinner=False)
-def buscar_pedidos(inicio, fim, situacao=None):
-    return get_crti().buscar_pedidos_material(data_inicio=inicio, data_fim=fim, situacao=situacao)
+@st.cache_data(ttl=600, show_spinner=False)
+def buscar_pedidos(inicio, fim, situacao=None, filiais_ids=None):
+    return get_crti().buscar_pedidos_material(
+        data_inicio=inicio, data_fim=fim,
+        situacao=situacao,
+        ids_filiais=filiais_ids or None
+    )
 
-@st.cache_data(ttl=300, show_spinner=False)
+
+
+@st.cache_data(ttl=600, show_spinner=False)  # 10 min
 def buscar_orcamentos(inicio, fim):
     return get_crti().buscar_orcamentos_venda(data_inicio=inicio, data_fim=fim)
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=7200, show_spinner=False)  # 2 horas — análise pesada
 def buscar_clientes_inativos_cache(dias=60):
     return get_crti().buscar_clientes_inativos(dias_sem_comprar=dias)
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)  # 30 min
 def buscar_materiais():
     return get_crti().buscar_materiais(apenas_ativos=False)
 
@@ -248,9 +276,18 @@ with st.sidebar:
 
     # Seleção de período
     st.markdown("**📅 Período**")
-    tipo_periodo = st.radio(
-        "Tipo",
-        ["Mês atual", "Mês anterior", "Últimos 7 dias", "Personalizado"],
+    tipo_periodo = st.selectbox(
+        "Período",
+        [
+            "Mês atual",
+            "Mês anterior",
+            "Últimos 7 dias",
+            "Últimos 30 dias",
+            "Últimos 3 meses",
+            "Últimos 6 meses",
+            "Ano atual",
+            "Personalizado",
+        ],
         label_visibility="collapsed"
     )
 
@@ -266,11 +303,54 @@ with st.sidebar:
         inicio, fim = Periodos.mes_atual()
     elif tipo_periodo == "Mês anterior":
         inicio, fim = Periodos.mes_anterior()
-    else:
+    elif tipo_periodo == "Últimos 7 dias":
         inicio, fim = Periodos.ultimos_7_dias()
+    elif tipo_periodo == "Últimos 30 dias":
+        inicio, fim = Periodos.ultimos_30_dias()
+    elif tipo_periodo == "Últimos 3 meses":
+        inicio, fim = Periodos.ultimos_n_meses(3)
+    elif tipo_periodo == "Últimos 6 meses":
+        inicio, fim = Periodos.ultimos_n_meses(6)
+    elif tipo_periodo == "Ano atual":
+        inicio, fim = Periodos.ano_atual()
+    else:
+        inicio, fim = Periodos.mes_atual()
 
     label_periodo = Periodos.formatar_label(inicio, fim)
     st.caption(f"📆 {label_periodo}")
+
+    st.divider()
+
+    # Seletor de filiais
+    st.markdown("**🏭 Filial**")
+    try:
+        filiais_dict = buscar_filiais()
+        if filiais_dict:
+            opcoes_filiais = {"Todas as filiais": None}
+            opcoes_filiais.update({v: k for k, v in filiais_dict.items()})
+            
+            filiais_selecionadas = st.multiselect(
+                "Filiais",
+                options=list(filiais_dict.values()),
+                default=None,
+                placeholder="Todas as filiais",
+                label_visibility="collapsed"
+            )
+            # IDs selecionados
+            filiais_ids = [filiais_dict[n] for n in filiais_selecionadas
+                           if n in {v: k for k,v in filiais_dict.items()}]
+            filiais_ids = [k for k,v in filiais_dict.items() if v in filiais_selecionadas]
+            
+            if filiais_selecionadas:
+                st.caption(f"🏭 {len(filiais_selecionadas)} filial(is) selecionada(s)")
+            else:
+                st.caption("🏭 Todas as filiais")
+                filiais_ids = None
+        else:
+            filiais_ids = None
+            st.caption("Carregando filiais...")
+    except Exception:
+        filiais_ids = None
 
     st.divider()
 
@@ -304,16 +384,23 @@ if pagina == "🏠 Painel Geral":
     </div>
     """, unsafe_allow_html=True)
 
-    with st.spinner("Carregando dados..."):
+    # Painel carrega em paralelo mostrando cada seção conforme fica pronto
+    ph_kpi  = st.empty()
+    ph_graf = st.empty()
+    ph_alert= st.empty()
+
+    with st.spinner("Carregando equipamentos..."):
+        equipamentos = buscar_equipamentos(filial_id=filiais_ids[0] if filiais_ids and len(filiais_ids)==1 else None)
+        res_equip    = resumir_equipamentos(equipamentos)
+
+    with st.spinner("Carregando OS e financeiro..."):
+        os_lista = buscar_os(inicio, fim, filiais_ids=filiais_ids)
+        trf      = buscar_transferencias(inicio, fim, filiais_ids=filiais_ids)
+        res_os   = resumir_os_manutencao(os_lista)
+        res_trf  = resumir_transferencias(trf)
+
+    with ph_kpi.container():
         try:
-            equipamentos = buscar_equipamentos()
-            os_lista     = buscar_os(inicio, fim)
-            trf          = buscar_transferencias(inicio, fim)
-
-            res_equip = resumir_equipamentos(equipamentos)
-            res_os    = resumir_os_manutencao(os_lista)
-            res_trf   = resumir_transferencias(trf)
-
             hoje = datetime.now().date().isoformat()
 
             # ── KPIs — 5 colunas desktop, 2+3 no mobile ──
@@ -371,107 +458,24 @@ if pagina == "🏠 Painel Geral":
                     fig2.update_traces(textposition="outside")
                     st.plotly_chart(fig2, use_container_width=True)
 
-            # ── Alertas ──
-            st.subheader("⚠️ Alertas Ativos")
-            alertas = []
-            if res_equip["seguros_vencidos"] > 0:
-                alertas.append(("err", f"🔴 {res_equip['seguros_vencidos']} equipamento(s) com seguro VENCIDO"))
-            if res_os["os_atrasadas"] > 0:
-                alertas.append(("warn", f"🟡 {res_os['os_atrasadas']} OS com prazo vencido e não concluída"))
-            if res_equip["sem_num_patrimonial"] > 0:
-                alertas.append(("warn", f"🟡 {res_equip['sem_num_patrimonial']} equipamento(s) sem número patrimonial"))
-            if not alertas:
-                alertas.append(("ok", "✅ Nenhum alerta crítico identificado no período"))
-
-            for tipo, msg in alertas:
-                st.markdown(f'<div class="alert-box {tipo}">{msg}</div>', unsafe_allow_html=True)
-
         except Exception as e:
             st.error(f"Erro ao carregar dados: {e}")
 
-
-# ─────────────────────────────────────────────
-#  PÁGINA 2 — FROTA
-# ─────────────────────────────────────────────
-elif pagina == "🚜 Frota e Equipamentos":
-    st.markdown("""
-    <div class="main-header">
-        <h1>🚜 Frota e Equipamentos</h1>
-        <p>Patrimônio, localização, seguros e horímetros</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    with st.spinner("Carregando equipamentos..."):
-        try:
-            equipamentos = buscar_equipamentos()
-            res = resumir_equipamentos(equipamentos)
-
-            # KPIs
-            c1, c2, c3, c4, c5 = st.columns(5)
-            with c1: st.markdown(kpi("Total Equip.", res["total_equipamentos"]), unsafe_allow_html=True)
-            with c2: st.markdown(kpi("Valor Aquisição", f"R$ {res['valor_aquisicao_total']/1e6:.1f}M"), unsafe_allow_html=True)
-            with c3: st.markdown(kpi("Depreciação", fmt_pct(res["depreciacao_pct"]),
-                                     delta="Alto" if res["depreciacao_pct"] > 60 else "Normal",
-                                     delta_type="warn" if res["depreciacao_pct"] > 60 else "up"), unsafe_allow_html=True)
-            with c4: st.markdown(kpi("Seguros Vencidos", res["seguros_vencidos"],
-                                     delta="⚠️ Urgente" if res["seguros_vencidos"] > 0 else "✓ OK",
-                                     delta_type="warn" if res["seguros_vencidos"] > 0 else "up"), unsafe_allow_html=True)
-            with c5: st.markdown(kpi("De Terceiros", res["de_subempreiteiros"]), unsafe_allow_html=True)
-
-            st.divider()
-
-            col_a, col_b = st.columns(2)
-
-            with col_a:
-                st.subheader("Equipamentos por Grupo")
-                if res["por_grupo"]:
-                    df_grp = pd.DataFrame(list(res["por_grupo"].items()), columns=["Grupo", "Qtde"])
-                    df_grp = df_grp.sort_values("Qtde", ascending=False).head(12)
-                    fig = px.bar(df_grp, x="Qtde", y="Grupo", orientation="h",
-                                 color="Qtde", color_continuous_scale=["#BDD0F0", "#1A3C6E"],
-                                 template="plotly_white")
-                    fig.update_layout(yaxis=dict(categoryorder="total ascending"),
-                                      showlegend=False, margin=dict(t=10, b=10))
-                    st.plotly_chart(fig, use_container_width=True)
-
-            with col_b:
-                st.subheader("Seguros Vencidos ⚠️")
-                if res["lista_seguros_vencidos"]:
-                    df_seg = pd.DataFrame(res["lista_seguros_vencidos"])
-                    df_seg = df_seg[["descricao", "placa", "vencimento", "valor_cobertura"]].copy()
-                    df_seg.columns = ["Equipamento", "Placa", "Vencimento", "Cobertura R$"]
-                    df_seg["Cobertura R$"] = df_seg["Cobertura R$"].apply(
-                        lambda v: fmt_brl(v) if v else "—"
-                    )
-                    st.dataframe(df_seg, use_container_width=True, height=300)
-                else:
-                    st.success("✅ Nenhum seguro vencido!")
-
-            # Tabela completa
-            st.subheader("Cadastro de Equipamentos")
-            df_equip = pd.DataFrame(equipamentos)
-            colunas = ["id", "descricao", "apelido", "placa", "descricaoGrupoEquipamento",
-                       "nomeFilialAtual", "ultimoHorometroOdometro", "valorAquisicao",
-                       "valorMercado", "vencimentoSeguro", "situacao"]
-            colunas_existentes = [c for c in colunas if c in df_equip.columns]
-            df_show = df_equip[colunas_existentes].copy()
-            df_show.columns = [c.replace("descricaoGrupoEquipamento", "Grupo")
-                                 .replace("nomeFilialAtual", "Filial")
-                                 .replace("ultimoHorometroOdometro", "Horímetro")
-                                 .replace("valorAquisicao", "Vl. Aquisição")
-                                 .replace("valorMercado", "Vl. Mercado")
-                                 .replace("vencimentoSeguro", "Seguro")
-                                 for c in colunas_existentes]
-
-            filtro = st.text_input("🔍 Filtrar por nome ou placa")
-            if filtro:
-                mask = df_show.apply(lambda row: row.astype(str).str.contains(filtro, case=False).any(), axis=1)
-                df_show = df_show[mask]
-
-            st.dataframe(df_show, use_container_width=True, height=400)
-
-        except Exception as e:
-            st.error(f"Erro: {e}")
+    try:
+        st.subheader("⚠️ Alertas Ativos")
+        alertas = []
+        if res_equip["seguros_vencidos"] > 0:
+            alertas.append(("err", f"🔴 {res_equip['seguros_vencidos']} equipamento(s) com seguro VENCIDO"))
+        if res_os["os_atrasadas"] > 0:
+            alertas.append(("warn", f"🟡 {res_os['os_atrasadas']} OS com prazo vencido e não concluída"))
+        if res_equip["sem_num_patrimonial"] > 0:
+            alertas.append(("warn", f"🟡 {res_equip['sem_num_patrimonial']} equipamento(s) sem número patrimonial"))
+        if not alertas:
+            alertas.append(("ok", "✅ Nenhum alerta crítico identificado no período"))
+        for tipo, msg in alertas:
+            st.markdown(f'<div class="alert-box {tipo}">{msg}</div>', unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar alertas: {e}")
 
 
 # ─────────────────────────────────────────────
@@ -487,7 +491,7 @@ elif pagina == "🔧 Manutenção":
 
     with st.spinner("Carregando OS..."):
         try:
-            os_lista = buscar_os(inicio, fim)
+            os_lista = buscar_os(inicio, fim, filiais_ids=filiais_ids)
             res = resumir_os_manutencao(os_lista)
 
             c1, c2, c3, c4 = st.columns(4)
@@ -571,7 +575,7 @@ elif pagina == "💳 Financeiro":
 
     with st.spinner("Carregando transferências..."):
         try:
-            trf = buscar_transferencias(inicio, fim)
+            trf = buscar_transferencias(inicio, fim, filiais_ids=filiais_ids)
             res = resumir_transferencias(trf)
 
             c1, c2, c3, c4, c5 = st.columns(5)
@@ -722,10 +726,26 @@ elif pagina == "🛍️ Vendas":
     </div>
     """, unsafe_allow_html=True)
 
-    with st.spinner("Carregando dados de vendas..."):
+    col_btn, col_info = st.columns([1, 3])
+    with col_btn:
+        carregar_vendas = st.button("🔄 Carregar dados de Vendas", use_container_width=True)
+    with col_info:
+        st.caption("Clique para buscar os dados do período selecionado.")
+
+    if not carregar_vendas and "vendas_pedidos" not in st.session_state:
+        st.info("👆 Clique em **Carregar dados de Vendas** para buscar os pedidos do período.")
+        st.stop()
+
+    if carregar_vendas:
+        with st.spinner("Buscando pedidos..."):
+            st.session_state["vendas_pedidos"]    = buscar_pedidos(inicio, fim, filiais_ids=filiais_ids)
+            st.session_state["vendas_orcamentos"] = buscar_orcamentos(inicio, fim)
+            st.session_state["vendas_periodo"]    = label_periodo
+
+    with st.spinner("Processando..."):
         try:
-            pedidos    = buscar_pedidos(inicio, fim)
-            orcamentos = buscar_orcamentos(inicio, fim)
+            pedidos    = st.session_state.get("vendas_pedidos", [])
+            orcamentos = st.session_state.get("vendas_orcamentos", [])
 
             from collections import Counter
             valor_total = sum(p.get("valorTotalPedido", 0) or 0 for p in pedidos)
@@ -826,9 +846,23 @@ elif pagina == "👥 Clientes Inativos":
     with col_cfg2:
         st.caption(f"Analisando histórico dos últimos 365 dias")
 
-    with st.spinner("Analisando carteira de clientes..."):
+    col_btn2, col_aviso = st.columns([1, 3])
+    with col_btn2:
+        carregar_inativos = st.button("🔍 Analisar Carteira", use_container_width=True)
+    with col_aviso:
+        st.caption("⏱️ Esta análise busca 365 dias de histórico — pode levar 30-60 segundos.")
+
+    if not carregar_inativos and "clientes_inativos_data" not in st.session_state:
+        st.info("👆 Clique em **Analisar Carteira** para identificar clientes inativos.")
+        st.stop()
+
+    if carregar_inativos:
+        with st.spinner("Analisando 365 dias de histórico... aguarde..."):
+            st.session_state["clientes_inativos_data"] = buscar_clientes_inativos_cache(dias=dias_inativo)
+
+    with st.spinner("Processando..."):
         try:
-            dados = buscar_clientes_inativos_cache(dias=dias_inativo)
+            dados = st.session_state.get("clientes_inativos_data", {})
             resumo   = dados["resumo"]
             inativos = dados["inativos"]
             ativos   = dados["ativos_recentes"]
