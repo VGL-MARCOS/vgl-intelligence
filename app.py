@@ -810,7 +810,7 @@ elif pagina == "🤖 Gerar Relatório com IA":
 
     # Gerar relatório
     if gerar:
-        from prompts.prompts import (
+        from Prompts.prompts import (
             prompt_auditoria_frota, prompt_relatorio_manutencao,
             prompt_relatorio_patrimonio_frota, prompt_auditoria_financeira,
             prompt_analise_financeira_mensal, prompt_auditoria_compras,
