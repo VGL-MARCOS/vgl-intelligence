@@ -1,1171 +1,868 @@
 """
-=============================================================
-  CRTI + CLAUDE — APP WEB
-  Interface visual para geração de relatórios e dashboards
-  Rode com: streamlit run app.py
-=============================================================
+CRTI Intelligence — App Web
+Britagem Vogelsanger LTDA
 """
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime
-import time
-import sys
-import os
+from datetime import datetime, timedelta
+from collections import Counter
+import sys, os, logging
 
-# Garante que os módulos do projeto são encontrados
 sys.path.insert(0, os.path.dirname(__file__))
 
-from modules.crti_client     import CRTIClient
-from modules.claude_analyzer import ClaudeAnalyzer
-from modules.report_generator import ReportGenerator
-from modules.periodos        import Periodos
-from modules.resumidor       import (
-    resumir_transferencias, resumir_equipamentos,
-    resumir_os_manutencao, resumir_materiais, resumir_compras
-)
-
-# ─────────────────────────────────────────────
-#  CONFIGURAÇÃO DA PÁGINA
-# ─────────────────────────────────────────────
 st.set_page_config(
     page_title="CRTI Intelligence | Vogelsanger",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="collapsed"  # fechado por padrão no celular
+    initial_sidebar_state="collapsed"
 )
 
-# ─────────────────────────────────────────────
-#  ESTILOS CSS
-# ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* ── MOBILE FIRST ── */
-    @media (max-width: 768px) {
-        .main-header { padding: 1rem !important; }
-        .main-header h1 { font-size: 1.2rem !important; }
-        .main-header p  { font-size: 0.8rem !important; }
-        .kpi-value { font-size: 1.3rem !important; }
-        .kpi-label { font-size: 0.7rem !important; }
-        .block-container { padding: 0.5rem !important; }
-        .kpi-card { padding: 0.6rem 0.4rem !important; }
-    }
-
-    /* Cabeçalho principal */
-    .main-header {
-        background: linear-gradient(135deg, #1A3C6E 0%, #2C5F9E 100%);
-        padding: 1.2rem 1.5rem;
-        border-radius: 12px;
-        color: white;
-        margin-bottom: 1rem;
-    }
-    .main-header h1 { color: white; margin: 0; font-size: 1.6rem; }
-    .main-header p  { color: #BDD0F0; margin: 0.2rem 0 0; font-size: 0.85rem; }
-
-    /* Cards de KPI — compactos no mobile */
-    .kpi-card {
-        background: white;
-        border: 1px solid #E0E8F5;
-        border-radius: 10px;
-        padding: 0.8rem 0.6rem;
-        text-align: center;
-        box-shadow: 0 2px 8px rgba(26,60,110,0.07);
-        height: 100%;
-    }
-    .kpi-value { font-size: 1.6rem; font-weight: 700; color: #1A3C6E; line-height: 1.2; }
-    .kpi-label { font-size: 0.75rem; color: #888; margin-top: 0.2rem; line-height: 1.3; }
-    .kpi-delta { font-size: 0.75rem; margin-top: 0.2rem; }
-    .kpi-delta.up   { color: #0A6E3F; }
-    .kpi-delta.down { color: #C0392B; }
-    .kpi-delta.warn { color: #F39C12; }
-
-    /* Alertas */
-    .alert-box {
-        background: #FDECEA;
-        border-left: 4px solid #C0392B;
-        padding: 0.7rem 0.8rem;
-        border-radius: 0 8px 8px 0;
-        margin: 0.4rem 0;
-        font-size: 0.9rem;
-    }
-    .alert-box.warn { background: #FFF3CD; border-left-color: #F39C12; }
-    .alert-box.ok   { background: #E8F5EE; border-left-color: #0A6E3F; }
-
-    /* Botões */
-    .stButton > button {
-        background: #1A3C6E;
-        color: white;
-        border: none;
-        border-radius: 8px;
-        padding: 0.6rem 1rem;
-        font-weight: 600;
-        width: 100%;
-        font-size: 0.9rem;
-    }
-    .stButton > button:hover { background: #2C5F9E; }
-
-    /* Status */
-    .status-ok   { background:#E8F5EE; color:#0A6E3F; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600; }
-    .status-warn { background:#FFF3CD; color:#F39C12; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600; }
-    .status-err  { background:#FDECEA; color:#C0392B; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600; }
-
-    /* Tabelas — scroll horizontal no mobile */
-    .stDataFrame { overflow-x: auto !important; }
-
-    /* Reduz padding geral no mobile */
-    .block-container { padding-top: 1rem; padding-bottom: 1rem; }
-
-    /* Gráficos responsivos */
-    .js-plotly-plot { width: 100% !important; }
-
-    /* Esconde menu e rodapé padrão */
-    #MainMenu { visibility: hidden; }
-    footer    { visibility: hidden; }
-
-    /* Sidebar mais compacta */
-    [data-testid="stSidebar"] { min-width: 240px !important; }
+.main-header {
+    background: linear-gradient(135deg, #1A3C6E 0%, #2C5F9E 100%);
+    padding: 1.2rem 1.5rem; border-radius: 12px; color: white; margin-bottom: 1rem;
+}
+.main-header h1 { color: white; margin: 0; font-size: 1.5rem; }
+.main-header p  { color: #BDD0F0; margin: 0.2rem 0 0; font-size: 0.85rem; }
+.kpi-card {
+    background: white; border: 1px solid #E0E8F5; border-radius: 10px;
+    padding: 0.8rem 0.6rem; text-align: center;
+    box-shadow: 0 2px 8px rgba(26,60,110,0.07); height: 100%;
+}
+.kpi-value { font-size: 1.5rem; font-weight: 700; color: #1A3C6E; line-height: 1.2; }
+.kpi-label { font-size: 0.75rem; color: #888; margin-top: 0.2rem; }
+.kpi-delta { font-size: 0.75rem; margin-top: 0.2rem; }
+.kpi-delta.up   { color: #0A6E3F; }
+.kpi-delta.warn { color: #F39C12; }
+.kpi-delta.down { color: #C0392B; }
+.alert-box { border-left: 4px solid #C0392B; background: #FDECEA;
+    padding: 0.7rem 0.8rem; border-radius: 0 8px 8px 0; margin: 0.3rem 0; font-size: 0.9rem; }
+.alert-box.warn { background: #FFF3CD; border-left-color: #F39C12; }
+.alert-box.ok   { background: #E8F5EE; border-left-color: #0A6E3F; }
+.status-ok   { background:#E8F5EE; color:#0A6E3F; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600; }
+.status-warn { background:#FFF3CD; color:#F39C12; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600; }
+.status-err  { background:#FDECEA; color:#C0392B; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600; }
+.stButton > button { background:#1A3C6E; color:white; border:none; border-radius:8px;
+    padding:0.5rem 1rem; font-weight:600; width:100%; }
+.stButton > button:hover { background:#2C5F9E; }
+#MainMenu { visibility: hidden; } footer { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
+# ── Helpers ──
+def fmt_brl(v):
+    try:    return f"R$ {float(v):,.2f}".replace(",","X").replace(".",",").replace("X",".")
+    except: return "R$ —"
 
-# ─────────────────────────────────────────────
-#  CACHE DE CONEXÃO
-# ─────────────────────────────────────────────
+def fmt_pct(v):
+    try:    return f"{float(v):.1f}%"
+    except: return "—"
+
+def kpi(label, value, delta=None, delta_type="ok"):
+    d = f'<div class="kpi-delta {delta_type}">{delta}</div>' if delta else ""
+    return f'<div class="kpi-card"><div class="kpi-value">{value}</div><div class="kpi-label">{label}</div>{d}</div>'
+
+# ── Conexões (singleton) ──
 @st.cache_resource(show_spinner=False)
 def get_crti():
+    from modules.crti_client import CRTIClient
     return CRTIClient()
 
 @st.cache_resource(show_spinner=False)
 def get_claude():
+    from modules.claude_analyzer import ClaudeAnalyzer
     return ClaudeAnalyzer()
 
 @st.cache_resource(show_spinner=False)
 def get_pdf():
+    from modules.report_generator import ReportGenerator
     return ReportGenerator()
 
+# ── Cache de dados ──
+@st.cache_data(ttl=300, show_spinner=False)
+def _info_empresa():
+    return get_crti().buscar_info_empresa()
 
-# ─────────────────────────────────────────────
-#  CACHE DE DADOS (evita rebuscar a cada clique)
-# ─────────────────────────────────────────────
-@st.cache_data(ttl=3600, show_spinner=False)
-def buscar_filiais():
-    """Busca filiais via equipamentos (campo nomeFilialAtual)."""
-    try:
-        # Usa equipamentos que já temos — extrai filiais únicas
-        equip = get_crti().buscar_equipamentos()
-        filiais = {}
-        for e in equip:
-            fid   = e.get("idFilialAtual")
-            fnome = e.get("nomeFilialAtual", "")
-            if fid and fnome and fnome not in filiais.values():
-                filiais[fid] = fnome
-        return dict(sorted(filiais.items(), key=lambda x: x[1]))
-    except Exception:
-        return {}
-
-@st.cache_data(ttl=1800, show_spinner=False)  # 30 min — cadastro muda pouco
-def buscar_equipamentos(filial_id=None):
-    return get_crti().buscar_equipamentos(filial_atual=filial_id)
+@st.cache_data(ttl=1800, show_spinner=False)
+def _equipamentos():
+    return get_crti().buscar_equipamentos()
 
 @st.cache_data(ttl=600, show_spinner=False)
-def buscar_os(inicio, fim, filiais_ids=None):
-    return get_crti().buscar_os_manutencao(
-        data_abertura_de=inicio, data_abertura_ate=fim,
-        filiais_oficina=filiais_ids or None
-    )
+def _os(inicio, fim):
+    return get_crti().buscar_os_manutencao(data_abertura_de=inicio, data_abertura_ate=fim)
 
 @st.cache_data(ttl=600, show_spinner=False)
-def buscar_transferencias(inicio, fim, filiais_ids=None):
-    return get_crti().buscar_transferencias(
-        inicio, fim,
-        filial_ids=filiais_ids or None
-    )
+def _transferencias(inicio, fim):
+    return get_crti().buscar_transferencias(inicio, fim)
 
 @st.cache_data(ttl=600, show_spinner=False)
-def buscar_compras(inicio, fim, filiais_ids=None):
+def _compras(inicio, fim):
     return get_crti().buscar_compras_periodo(inicio, fim)
 
 @st.cache_data(ttl=600, show_spinner=False)
-def buscar_pedidos(inicio, fim, situacao=None, filiais_ids=None):
-    return get_crti().buscar_pedidos_material(
-        data_inicio=inicio, data_fim=fim,
-        situacao=situacao,
-        ids_filiais=filiais_ids or None
-    )
-
-
+def _pedidos(inicio, fim):
+    return get_crti().buscar_pedidos_material(data_inicio=inicio, data_fim=fim)
 
 @st.cache_data(ttl=600, show_spinner=False)
-def buscar_orcamentos(inicio, fim):
-    try:
-        return get_crti().buscar_orcamentos_venda(data_inicio=inicio, data_fim=fim)
-    except Exception as e:
-        # CRTI pode retornar 500 neste endpoint — retorna lista vazia
-        import logging
-        logging.getLogger("app").warning(f"Orçamentos indisponível: {e}")
-        return []
+def _orcamentos(inicio, fim):
+    try:    return get_crti().buscar_orcamentos_venda(data_inicio=inicio, data_fim=fim)
+    except: return []
 
-@st.cache_data(ttl=7200, show_spinner=False)  # 2 horas — análise pesada
-def buscar_clientes_inativos_cache(dias=60):
-    return get_crti().buscar_clientes_inativos(dias_sem_comprar=dias)
-
-@st.cache_data(ttl=1800, show_spinner=False)  # 30 min
-def buscar_materiais():
+@st.cache_data(ttl=1800, show_spinner=False)
+def _materiais():
     return get_crti().buscar_materiais(apenas_ativos=False)
 
-@st.cache_data(ttl=300, show_spinner=False)
-def buscar_info_empresa():
-    return get_crti().buscar_info_empresa()
+@st.cache_data(ttl=7200, show_spinner=False)
+def _clientes_inativos(dias):
+    return get_crti().buscar_clientes_inativos(dias_sem_comprar=dias)
 
+# ── Períodos ──
+def resolver_periodo(tipo, data_ini=None, data_fim=None):
+    from modules.periodos import Periodos
+    hoje = datetime.now()
+    if tipo == "Mês atual":        return Periodos.mes_atual()
+    if tipo == "Mês anterior":     return Periodos.mes_anterior()
+    if tipo == "Últimos 7 dias":   return Periodos.ultimos_7_dias()
+    if tipo == "Últimos 30 dias":  return Periodos.ultimos_30_dias()
+    if tipo == "Últimos 3 meses":  return Periodos.ultimos_n_meses(3)
+    if tipo == "Últimos 6 meses":  return Periodos.ultimos_n_meses(6)
+    if tipo == "Ano atual":        return Periodos.ano_atual()
+    if tipo == "Personalizado" and data_ini and data_fim:
+        return data_ini.strftime("%Y-%m-%d"), data_fim.strftime("%Y-%m-%d")
+    return Periodos.mes_atual()
 
-# ─────────────────────────────────────────────
-#  HELPERS DE FORMATAÇÃO
-# ─────────────────────────────────────────────
-def fmt_brl(v):
-    try:
-        return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except:
-        return "R$ —"
+def fmt_label(inicio, fim):
+    fi = datetime.strptime(inicio, "%Y-%m-%d").strftime("%d/%m/%Y")
+    ff = datetime.strptime(fim,    "%Y-%m-%d").strftime("%d/%m/%Y")
+    return fi if inicio == fim else f"{fi} a {ff}"
 
-def fmt_pct(v):
-    try:
-        return f"{float(v):.1f}%"
-    except:
-        return "—"
-
-def kpi(label, value, delta=None, delta_type="ok"):
-    delta_html = ""
-    if delta:
-        delta_html = f'<div class="kpi-delta {delta_type}">{delta}</div>'
-    return f"""
-    <div class="kpi-card">
-        <div class="kpi-value">{value}</div>
-        <div class="kpi-label">{label}</div>
-        {delta_html}
-    </div>
-    """
-
-
-# ─────────────────────────────────────────────
-#  SIDEBAR — NAVEGAÇÃO E PERÍODO
-# ─────────────────────────────────────────────
+# ════════════════════════════════════════
+#  SIDEBAR
+# ════════════════════════════════════════
 with st.sidebar:
     st.markdown("""
-    <div style="text-align:center; padding: 0.5rem 0 1rem;">
+    <div style="text-align:center;padding:0.5rem 0 1rem;">
         <div style="font-size:2rem;">📊</div>
-        <div style="font-weight:700; color:#1A3C6E; font-size:1.1rem;">CRTI Intelligence</div>
-        <div style="color:#888; font-size:0.8rem;">Britagem Vogelsanger</div>
-    </div>
-    """, unsafe_allow_html=True)
+        <div style="font-weight:700;color:#1A3C6E;font-size:1.1rem;">CRTI Intelligence</div>
+        <div style="color:#888;font-size:0.8rem;">Britagem Vogelsanger</div>
+    </div>""", unsafe_allow_html=True)
 
     st.divider()
 
-    # Navegação
-    pagina = st.selectbox(
-        "📍 Módulo",
-        options=[
-            "🏠 Painel Geral",
-            "🛍️ Vendas",
-            "👥 Clientes Inativos",
-            "🚜 Frota e Equipamentos",
-            "🔧 Manutenção",
-            "💳 Financeiro",
-            "🛒 Compras",
-            "📦 Materiais",
-            "🤖 Gerar Relatório com IA",
-        ]
-    )
+    pagina = st.selectbox("📍 Módulo", [
+        "🏠 Painel Geral",
+        "🛍️ Vendas",
+        "👥 Clientes Inativos",
+        "🚜 Frota e Equipamentos",
+        "🔧 Manutenção",
+        "💳 Financeiro",
+        "🛒 Compras",
+        "📦 Materiais",
+        "🤖 Gerar Relatório com IA",
+    ])
 
     st.divider()
 
-    # Seleção de período
+    # Período
     st.markdown("**📅 Período**")
-    tipo_periodo = st.selectbox(
-        "Período",
-        [
-            "Mês atual",
-            "Mês anterior",
-            "Últimos 7 dias",
-            "Últimos 30 dias",
-            "Últimos 3 meses",
-            "Últimos 6 meses",
-            "Ano atual",
-            "Personalizado",
-        ],
-        label_visibility="collapsed"
-    )
+    tipo_periodo = st.selectbox("Período", [
+        "Mês atual", "Mês anterior", "Últimos 7 dias",
+        "Últimos 30 dias", "Últimos 3 meses",
+        "Últimos 6 meses", "Ano atual", "Personalizado",
+    ], label_visibility="collapsed")
 
+    data_ini_custom = data_fim_custom = None
     if tipo_periodo == "Personalizado":
-        col1, col2 = st.columns(2)
-        with col1:
-            data_ini = st.date_input("Início", value=datetime.now().replace(day=1))
-        with col2:
-            data_fim = st.date_input("Fim", value=datetime.now())
-        inicio = data_ini.strftime("%Y-%m-%d")
-        fim    = data_fim.strftime("%Y-%m-%d")
-    elif tipo_periodo == "Mês atual":
-        inicio, fim = Periodos.mes_atual()
-    elif tipo_periodo == "Mês anterior":
-        inicio, fim = Periodos.mes_anterior()
-    elif tipo_periodo == "Últimos 7 dias":
-        inicio, fim = Periodos.ultimos_7_dias()
-    elif tipo_periodo == "Últimos 30 dias":
-        inicio, fim = Periodos.ultimos_30_dias()
-    elif tipo_periodo == "Últimos 3 meses":
-        inicio, fim = Periodos.ultimos_n_meses(3)
-    elif tipo_periodo == "Últimos 6 meses":
-        inicio, fim = Periodos.ultimos_n_meses(6)
-    elif tipo_periodo == "Ano atual":
-        inicio, fim = Periodos.ano_atual()
-    else:
-        inicio, fim = Periodos.mes_atual()
+        c1, c2 = st.columns(2)
+        with c1: data_ini_custom = st.date_input("Início", value=datetime.now().replace(day=1))
+        with c2: data_fim_custom = st.date_input("Fim",    value=datetime.now())
 
-    label_periodo = Periodos.formatar_label(inicio, fim)
+    inicio, fim = resolver_periodo(tipo_periodo, data_ini_custom, data_fim_custom)
+    label_periodo = fmt_label(inicio, fim)
     st.caption(f"📆 {label_periodo}")
 
     st.divider()
 
-    # Seletor de filiais
-    st.markdown("**🏭 Filial**")
-    filiais_ids = None
-    try:
-        filiais_dict = buscar_filiais()
-        if filiais_dict:
-            filiais_selecionadas = st.multiselect(
-                "Filiais",
-                options=sorted(filiais_dict.values()),
-                default=None,
-                placeholder="Todas as filiais",
-                label_visibility="collapsed"
-            )
-            if filiais_selecionadas:
-                filiais_ids = [k for k,v in filiais_dict.items()
-                               if v in filiais_selecionadas] or None
-                st.caption(f"🏭 {len(filiais_selecionadas)} filial(is)")
-            else:
-                st.caption("🏭 Todas as filiais")
-        else:
-            st.caption("🏭 Todas as filiais")
-    except Exception:
-        st.caption("🏭 Todas as filiais")
+    # Filial — carrega APENAS quando o usuário expandir
+    with st.expander("🏭 Filtrar por Filial"):
         filiais_ids = None
+        if st.button("Carregar filiais", key="btn_filiais"):
+            st.session_state["filiais_carregadas"] = True
+
+        if st.session_state.get("filiais_carregadas"):
+            try:
+                equip = _equipamentos()
+                fd = {}
+                for e in equip:
+                    fid = e.get("idFilialAtual")
+                    fnome = e.get("nomeFilialAtual","")
+                    if fid and fnome: fd[fid] = fnome
+                fd = dict(sorted(fd.items(), key=lambda x: x[1]))
+
+                if fd:
+                    sel = st.multiselect("Filiais", sorted(fd.values()),
+                                         placeholder="Todas", label_visibility="collapsed")
+                    filiais_ids = [k for k,v in fd.items() if v in sel] or None
+                    if filiais_ids:
+                        st.caption(f"🏭 {len(filiais_ids)} filial(is)")
+            except Exception as ex:
+                st.caption(f"Erro: {ex}")
+        else:
+            st.caption("Clique para carregar filiais")
 
     st.divider()
 
-    # Status da conexão
+    # Status
     st.markdown("**🔌 Status**")
     try:
-        info    = buscar_info_empresa()
-        empresa = info.get("nomeEmpresa", "Conectado")
-        st.markdown(f'<span class="status-ok">✓ {empresa[:20]}</span>', unsafe_allow_html=True)
-    except Exception:
-        st.markdown('<span class="status-warn">⚠ Verificando...</span>', unsafe_allow_html=True)
+        info = _info_empresa()
+        emp  = info.get("nomeEmpresa","")[:20]
+        st.markdown(f'<span class="status-ok">✓ {emp}</span>', unsafe_allow_html=True)
+    except:
+        st.markdown('<span class="status-warn">⚠ Conectando...</span>', unsafe_allow_html=True)
 
-    st.caption(f"Atualizado: {datetime.now().strftime('%H:%M:%S')}")
-    if st.button("🔄 Atualizar dados", use_container_width=True):
+    st.caption(f"⏰ {datetime.now().strftime('%H:%M:%S')}")
+    if st.button("🔄 Atualizar", use_container_width=True):
         st.cache_data.clear()
+        st.session_state.pop("filiais_carregadas", None)
         st.rerun()
 
 
-# ═══════════════════════════════════════════════
-#  PÁGINAS
-# ═══════════════════════════════════════════════
-
-# ─────────────────────────────────────────────
-#  PÁGINA 1 — PAINEL GERAL
-# ─────────────────────────────────────────────
+# ════════════════════════════════════════
+#  PAINEL GERAL
+# ════════════════════════════════════════
 if pagina == "🏠 Painel Geral":
-    st.markdown("""
-    <div class="main-header">
+    st.markdown(f"""<div class="main-header">
         <h1>📊 Painel Executivo</h1>
-        <p>Visão consolidada da operação — Britagem Vogelsanger LTDA</p>
-    </div>
-    """, unsafe_allow_html=True)
+        <p>Visão consolidada · {label_periodo}</p></div>""", unsafe_allow_html=True)
 
-    # Painel carrega em paralelo mostrando cada seção conforme fica pronto
-    ph_kpi  = st.empty()
-    ph_graf = st.empty()
-    ph_alert= st.empty()
-
-    with st.spinner("Carregando equipamentos..."):
-        equipamentos = buscar_equipamentos(filial_id=filiais_ids[0] if filiais_ids and len(filiais_ids)==1 else None)
-        res_equip    = resumir_equipamentos(equipamentos)
-
-    with st.spinner("Carregando OS e financeiro..."):
-        os_lista = buscar_os(inicio, fim, filiais_ids=filiais_ids)
-        trf      = buscar_transferencias(inicio, fim, filiais_ids=filiais_ids)
-        res_os   = resumir_os_manutencao(os_lista)
-        res_trf  = resumir_transferencias(trf)
-
-    with ph_kpi.container():
+    with st.spinner("Carregando dados..."):
         try:
-            hoje = datetime.now().date().isoformat()
+            from modules.resumidor import resumir_equipamentos, resumir_os_manutencao, resumir_transferencias
+            equip = _equipamentos()
+            os_l  = _os(inicio, fim)
+            trf   = _transferencias(inicio, fim)
+            re    = resumir_equipamentos(equip)
+            ro    = resumir_os_manutencao(os_l)
+            rt    = resumir_transferencias(trf)
 
-            # ── KPIs — 5 colunas desktop, 2+3 no mobile ──
-            col1, col2, col3, col4, col5 = st.columns([1,1,1,1,1])
-            with col1:
-                st.markdown(kpi("Equipamentos", res_equip["total_equipamentos"]), unsafe_allow_html=True)
-            with col2:
-                st.markdown(kpi("OS no Período", res_os["total_os"],
-                                delta=f"⚠️ {res_os['os_atrasadas']} atrasadas" if res_os['os_atrasadas'] > 0 else "✓ Todas no prazo",
-                                delta_type="warn" if res_os['os_atrasadas'] > 0 else "up"),
-                            unsafe_allow_html=True)
-            with col3:
-                st.markdown(kpi("Seguros Vencidos", res_equip["seguros_vencidos"],
-                                delta="⚠️ Ação urgente" if res_equip["seguros_vencidos"] > 0 else "✓ OK",
-                                delta_type="warn" if res_equip["seguros_vencidos"] > 0 else "up"),
-                            unsafe_allow_html=True)
-            with col4:
-                st.markdown(kpi("Docs Financeiros", res_trf["total_documentos"]), unsafe_allow_html=True)
-            with col5:
-                st.markdown(kpi("Valor no Período", fmt_brl(res_trf["valor_total_emitido"])), unsafe_allow_html=True)
+            c1,c2,c3,c4,c5 = st.columns(5)
+            with c1: st.markdown(kpi("Equipamentos", re["total_equipamentos"]), unsafe_allow_html=True)
+            with c2: st.markdown(kpi("OS no Período", ro["total_os"],
+                delta=f"⚠️ {ro['os_atrasadas']} atrasadas" if ro["os_atrasadas"] else "✓ OK",
+                delta_type="warn" if ro["os_atrasadas"] else "up"), unsafe_allow_html=True)
+            with c3: st.markdown(kpi("Seguros Vencidos", re["seguros_vencidos"],
+                delta="⚠️ Urgente" if re["seguros_vencidos"] else "✓ OK",
+                delta_type="warn" if re["seguros_vencidos"] else "up"), unsafe_allow_html=True)
+            with c4: st.markdown(kpi("Docs Financeiros", rt["total_documentos"]), unsafe_allow_html=True)
+            with c5: st.markdown(kpi("Valor Período", fmt_brl(rt["valor_total_emitido"])), unsafe_allow_html=True)
 
             st.divider()
-
-            # ── Gráficos ──
-            col_a, col_b = st.columns(2)
-
-            with col_a:
+            ca, cb = st.columns(2)
+            with ca:
                 st.subheader("OS por Situação")
-                if res_os["por_situacao"]:
-                    df_sit = pd.DataFrame(
-                        list(res_os["por_situacao"].items()),
-                        columns=["Situação", "Quantidade"]
-                    )
-                    fig = px.bar(df_sit, x="Situação", y="Quantidade",
-                                 color="Quantidade",
-                                 color_continuous_scale=["#2C5F9E", "#1A3C6E"],
-                                 template="plotly_white")
-                    fig.update_layout(showlegend=False, margin=dict(t=20, b=20))
+                if ro["por_situacao"]:
+                    df = pd.DataFrame(list(ro["por_situacao"].items()), columns=["Situação","Qtde"])
+                    fig = px.bar(df, x="Situação", y="Qtde", color="Qtde",
+                                 color_continuous_scale=["#BDD0F0","#1A3C6E"], template="plotly_white")
+                    fig.update_layout(showlegend=False, margin=dict(t=10,b=10))
                     st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("Nenhuma OS no período selecionado.")
-
-            with col_b:
-                st.subheader("Top 10 Fornecedores (Financeiro)")
-                if res_trf["top_15_fornecedores"]:
-                    df_forn = pd.DataFrame(res_trf["top_15_fornecedores"][:10])
-                    df_forn["valor_fmt"] = df_forn["valor"].apply(fmt_brl)
-                    fig2 = px.bar(df_forn, x="valor", y="fornecedor",
-                                  orientation="h",
-                                  color_discrete_sequence=["#1A3C6E"],
-                                  template="plotly_white",
-                                  text="valor_fmt")
-                    fig2.update_layout(yaxis=dict(categoryorder="total ascending"),
-                                       margin=dict(t=20, b=20), showlegend=False)
-                    fig2.update_traces(textposition="outside")
+            with cb:
+                st.subheader("Top 10 Fornecedores")
+                if rt["top_15_fornecedores"]:
+                    df2 = pd.DataFrame(rt["top_15_fornecedores"][:10])
+                    df2["vf"] = df2["valor"].apply(fmt_brl)
+                    fig2 = px.bar(df2, x="valor", y="fornecedor", orientation="h",
+                                  text="vf", color_discrete_sequence=["#1A3C6E"], template="plotly_white")
+                    fig2.update_layout(showlegend=False, margin=dict(t=10))
                     st.plotly_chart(fig2, use_container_width=True)
 
-        except Exception as e:
-            st.error(f"Erro ao carregar dados: {e}")
-
-    try:
-        st.subheader("⚠️ Alertas Ativos")
-        alertas = []
-        if res_equip["seguros_vencidos"] > 0:
-            alertas.append(("err", f"🔴 {res_equip['seguros_vencidos']} equipamento(s) com seguro VENCIDO"))
-        if res_os["os_atrasadas"] > 0:
-            alertas.append(("warn", f"🟡 {res_os['os_atrasadas']} OS com prazo vencido e não concluída"))
-        if res_equip["sem_num_patrimonial"] > 0:
-            alertas.append(("warn", f"🟡 {res_equip['sem_num_patrimonial']} equipamento(s) sem número patrimonial"))
-        if not alertas:
-            alertas.append(("ok", "✅ Nenhum alerta crítico identificado no período"))
-        for tipo, msg in alertas:
-            st.markdown(f'<div class="alert-box {tipo}">{msg}</div>', unsafe_allow_html=True)
-    except Exception as e:
-        st.error(f"Erro ao carregar alertas: {e}")
-
-
-# ─────────────────────────────────────────────
-#  PÁGINA 3 — MANUTENÇÃO
-# ─────────────────────────────────────────────
-elif pagina == "🔧 Manutenção":
-    st.markdown(f"""
-    <div class="main-header">
-        <h1>🔧 Manutenção</h1>
-        <p>Ordens de serviço · {label_periodo}</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    with st.spinner("Carregando OS..."):
-        try:
-            os_lista = buscar_os(inicio, fim, filiais_ids=filiais_ids)
-            res = resumir_os_manutencao(os_lista)
-
-            c1, c2, c3, c4 = st.columns(4)
-            with c1: st.markdown(kpi("Total OS", res["total_os"]), unsafe_allow_html=True)
-            with c2: st.markdown(kpi("OS Atrasadas", res["os_atrasadas"],
-                                     delta="⚠️ Ação necessária" if res["os_atrasadas"] > 0 else "✓ OK",
-                                     delta_type="warn" if res["os_atrasadas"] > 0 else "up"),
-                                 unsafe_allow_html=True)
-            with c3:
-                qtde_equip = len(res["top_10_equipamentos"])
-                st.markdown(kpi("Equip. em OS", qtde_equip), unsafe_allow_html=True)
-            with c4:
-                qtde_def = len(res["top_10_defeitos"])
-                st.markdown(kpi("Tipos de Defeito", qtde_def), unsafe_allow_html=True)
-
-            st.divider()
-
-            col_a, col_b = st.columns(2)
-
-            with col_a:
-                st.subheader("OS por Situação")
-                if res["por_situacao"]:
-                    df_sit = pd.DataFrame(list(res["por_situacao"].items()), columns=["Situação", "Qtde"])
-                    fig = px.pie(df_sit, values="Qtde", names="Situação",
-                                 color_discrete_sequence=px.colors.sequential.Blues_r,
-                                 template="plotly_white")
-                    fig.update_layout(margin=dict(t=10, b=10))
-                    st.plotly_chart(fig, use_container_width=True)
-
-            with col_b:
-                st.subheader("Top 10 Defeitos Mais Frequentes")
-                if res["top_10_defeitos"]:
-                    df_def = pd.DataFrame(list(res["top_10_defeitos"].items()), columns=["Defeito", "Qtde"])
-                    df_def = df_def.sort_values("Qtde", ascending=True)
-                    fig2 = px.bar(df_def, x="Qtde", y="Defeito", orientation="h",
-                                  color_discrete_sequence=["#2C5F9E"],
-                                  template="plotly_white")
-                    fig2.update_layout(margin=dict(t=10, b=10), showlegend=False)
-                    st.plotly_chart(fig2, use_container_width=True)
-
-            # OS Atrasadas
-            if res["lista_atrasadas"]:
-                st.subheader("⚠️ OS Atrasadas")
-                df_atr = pd.DataFrame(res["lista_atrasadas"])
-                df_atr.columns = ["ID", "Equipamento", "Defeito", "Prazo", "Situação"]
-                st.dataframe(df_atr, use_container_width=True)
-
-            # Tabela completa
-            st.subheader("Todas as OS do Período")
-            df_os = pd.DataFrame(os_lista)
-            if not df_os.empty:
-                colunas_os = [c for c in ["id", "dataAbertura", "dataPrevTermino",
-                               "situacao", "tipo", "defeito", "causaProvavel"] if c in df_os.columns]
-                if "equipamento" in df_os.columns:
-                    df_os["equipamento_nome"] = df_os["equipamento"].apply(
-                        lambda x: x.get("descricao", "") if isinstance(x, dict) else ""
-                    )
-                    colunas_os = ["id", "equipamento_nome"] + [c for c in colunas_os if c != "id"]
-
-                filtro_os = st.text_input("🔍 Filtrar OS")
-                df_show = df_os[colunas_os].copy()
-                if filtro_os:
-                    mask = df_show.apply(lambda row: row.astype(str).str.contains(filtro_os, case=False).any(), axis=1)
-                    df_show = df_show[mask]
-                st.dataframe(df_show, use_container_width=True, height=400)
-
+            st.subheader("⚠️ Alertas")
+            alertas = []
+            if re["seguros_vencidos"]:   alertas.append(("err",  f"🔴 {re['seguros_vencidos']} seguro(s) vencido(s)"))
+            if ro["os_atrasadas"]:       alertas.append(("warn", f"🟡 {ro['os_atrasadas']} OS com prazo vencido"))
+            if re["sem_num_patrimonial"]:alertas.append(("warn", f"🟡 {re['sem_num_patrimonial']} equip. sem nº patrimonial"))
+            if not alertas:              alertas.append(("ok",   "✅ Nenhum alerta crítico"))
+            for t, m in alertas:
+                st.markdown(f'<div class="alert-box {t}">{m}</div>', unsafe_allow_html=True)
         except Exception as e:
             st.error(f"Erro: {e}")
 
 
-# ─────────────────────────────────────────────
-#  PÁGINA 4 — FINANCEIRO
-# ─────────────────────────────────────────────
-elif pagina == "💳 Financeiro":
-    st.markdown(f"""
-    <div class="main-header">
-        <h1>💳 Financeiro</h1>
-        <p>Contas a pagar e receber · {label_periodo}</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    with st.spinner("Carregando transferências..."):
-        try:
-            trf = buscar_transferencias(inicio, fim, filiais_ids=filiais_ids)
-            res = resumir_transferencias(trf)
-
-            c1, c2, c3, c4, c5 = st.columns(5)
-            with c1: st.markdown(kpi("Documentos", res["total_documentos"]), unsafe_allow_html=True)
-            with c2: st.markdown(kpi("Valor Total", fmt_brl(res["valor_total_emitido"])), unsafe_allow_html=True)
-            with c3: st.markdown(kpi("Valor Líquido", fmt_brl(res["valor_liquido_total"])), unsafe_allow_html=True)
-            with c4: st.markdown(kpi("Total Juros", fmt_brl(res["total_juros"]),
-                                     delta="⚠️ Alto" if res["total_juros"] > 10000 else "Normal",
-                                     delta_type="warn" if res["total_juros"] > 10000 else "up"),
-                                 unsafe_allow_html=True)
-            with c5: st.markdown(kpi("Ticket Médio", fmt_brl(res["ticket_medio"])), unsafe_allow_html=True)
-
-            st.divider()
-
-            col_a, col_b = st.columns(2)
-
-            with col_a:
-                st.subheader("Top 15 Fornecedores")
-                if res["top_15_fornecedores"]:
-                    df_forn = pd.DataFrame(res["top_15_fornecedores"])
-                    df_forn["valor_fmt"] = df_forn["valor"].apply(fmt_brl)
-                    fig = px.bar(df_forn.sort_values("valor"), x="valor", y="fornecedor",
-                                 orientation="h", text="valor_fmt",
-                                 color_discrete_sequence=["#1A3C6E"],
-                                 template="plotly_white")
-                    fig.update_layout(showlegend=False, margin=dict(t=10))
-                    fig.update_traces(textposition="outside")
-                    st.plotly_chart(fig, use_container_width=True)
-
-            with col_b:
-                st.subheader("Distribuição por Mês")
-                if res["distribuicao_por_mes"]:
-                    df_mes = pd.DataFrame(list(res["distribuicao_por_mes"].items()),
-                                          columns=["Mês", "Qtde"])
-                    df_mes = df_mes.sort_values("Mês")
-                    fig2 = px.bar(df_mes, x="Mês", y="Qtde",
-                                  color_discrete_sequence=["#2C5F9E"],
-                                  template="plotly_white")
-                    fig2.update_layout(margin=dict(t=10))
-                    st.plotly_chart(fig2, use_container_width=True)
-
-            # Tabela de transferências
-            st.subheader("Lançamentos do Período")
-            df_trf = pd.DataFrame(res["amostra_documentos"])
-            if not df_trf.empty:
-                if "fornecedor" in df_trf.columns:
-                    df_trf["fornecedor_nome"] = df_trf["fornecedor"].apply(
-                        lambda x: x.get("nomeRazao") or x.get("nomeFantasia", "") if isinstance(x, dict) else ""
-                    )
-                colunas_fin = [c for c in ["id", "fornecedor_nome", "numeroDocumento",
-                               "dataEmissao", "valorTotalDocumento", "valorLiquido",
-                               "valorJuros", "valorDesconto"] if c in df_trf.columns]
-                st.dataframe(df_trf[colunas_fin], use_container_width=True, height=350)
-
-        except Exception as e:
-            st.error(f"Erro: {e}")
-
-
-# ─────────────────────────────────────────────
-#  PÁGINA 5 — COMPRAS
-# ─────────────────────────────────────────────
-elif pagina == "🛒 Compras":
-    st.markdown(f"""
-    <div class="main-header">
-        <h1>🛒 Compras</h1>
-        <p>Pipeline de requisições · {label_periodo}</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    with st.spinner("Carregando dados de compras..."):
-        try:
-            dados = buscar_compras(inicio, fim)
-            res   = resumir_compras(dados)
-
-            c1, c2, c3, c4, c5 = st.columns(5)
-            with c1: st.markdown(kpi("Requisições", res["total_requisicoes"]), unsafe_allow_html=True)
-            with c2: st.markdown(kpi("Ordens de Compra", res["total_ocs"]), unsafe_allow_html=True)
-            with c3: st.markdown(kpi("OCs Sem Processo", res["ocs_diretas_sem_req"],
-                                     delta="⚠️ Auditar" if res["ocs_diretas_sem_req"] > 0 else "✓ OK",
-                                     delta_type="warn" if res["ocs_diretas_sem_req"] > 0 else "up"),
-                                 unsafe_allow_html=True)
-            with c4: st.markdown(kpi("Valor Total", fmt_brl(res["valor_total_comprado"])), unsafe_allow_html=True)
-            with c5: st.markdown(kpi("Frete %", fmt_pct(res["frete_pct"]),
-                                     delta="⚠️ Alto" if res["frete_pct"] > 10 else "Normal",
-                                     delta_type="warn" if res["frete_pct"] > 10 else "up"),
-                                 unsafe_allow_html=True)
-
-            st.divider()
-
-            col_a, col_b = st.columns(2)
-
-            with col_a:
-                st.subheader("Top 15 Fornecedores")
-                if res["top_15_fornecedores"]:
-                    df_f = pd.DataFrame(res["top_15_fornecedores"])
-                    df_f["valor_fmt"] = df_f["valor"].apply(fmt_brl)
-                    fig = px.bar(df_f.sort_values("valor"), x="valor", y="fornecedor",
-                                 orientation="h", text="valor_fmt",
-                                 color_discrete_sequence=["#4A235A"],
-                                 template="plotly_white")
-                    fig.update_layout(showlegend=False, margin=dict(t=10))
-                    st.plotly_chart(fig, use_container_width=True)
-
-            with col_b:
-                st.subheader("Composição do Valor")
-                labels = ["Mercadorias", "Frete", "Desconto"]
-                values = [res["valor_mercadorias"], res["valor_frete"],
-                          abs(res["valor_desconto"])]
-                fig2 = go.Figure(data=[go.Pie(
-                    labels=labels, values=values,
-                    marker_colors=["#1A3C6E", "#F39C12", "#0A6E3F"],
-                    hole=0.4
-                )])
-                fig2.update_layout(margin=dict(t=10, b=10))
-                st.plotly_chart(fig2, use_container_width=True)
-
-            # OCs diretas
-            if res["ocs_diretas_lista"]:
-                st.subheader("⚠️ OCs Geradas Sem Requisição/Cotação")
-                df_ocd = pd.DataFrame([
-                    d.get("ordemCompraMestreResumida", d)
-                    for d in res["ocs_diretas_lista"]
-                ])
-                if not df_ocd.empty:
-                    if "fornecedorResumido" in df_ocd.columns:
-                        df_ocd["fornecedor_nome"] = df_ocd["fornecedorResumido"].apply(
-                            lambda x: x.get("nomeRazao", "") if isinstance(x, dict) else ""
-                        )
-                    colunas_ocd = [c for c in ["id", "fornecedor_nome", "dataOrdemCompra",
-                                   "descricaoSituacao", "valorTotalCompras",
-                                   "descricaoCondicaoPagamento"] if c in df_ocd.columns]
-                    df_ocd_show = df_ocd[colunas_ocd].copy()
-                    df_ocd_show = df_ocd_show.loc[:, ~df_ocd_show.columns.duplicated()]
-                    st.dataframe(df_ocd_show, use_container_width=True)
-
-        except Exception as e:
-            st.error(f"Erro: {e}")
-
-
-# ─────────────────────────────────────────────
-#  PÁGINA 6 — MATERIAIS
-# ─────────────────────────────────────────────
+# ════════════════════════════════════════
+#  VENDAS
+# ════════════════════════════════════════
 elif pagina == "🛍️ Vendas":
-    st.markdown(f"""
-    <div class="main-header">
+    st.markdown(f"""<div class="main-header">
         <h1>🛍️ Vendas</h1>
-        <p>Pedidos, orçamentos e performance comercial · {label_periodo}</p>
-    </div>
-    """, unsafe_allow_html=True)
+        <p>Pedidos e orçamentos · {label_periodo}</p></div>""", unsafe_allow_html=True)
 
-    col_btn, col_info = st.columns([1, 3])
-    with col_btn:
-        carregar_vendas = st.button("🔄 Carregar dados de Vendas", use_container_width=True)
-    with col_info:
-        st.caption("Clique para buscar os dados do período selecionado.")
+    if st.button("🔄 Carregar dados de Vendas"):
+        st.session_state["v_pedidos"] = _pedidos(inicio, fim)
+        st.session_state["v_orc"]     = _orcamentos(inicio, fim)
+        st.session_state["v_periodo"] = label_periodo
 
-    if not carregar_vendas and "vendas_pedidos" not in st.session_state:
-        st.info("👆 Clique em **Carregar dados de Vendas** para buscar os pedidos do período.")
-        st.stop()
-
-    if carregar_vendas:
-        with st.spinner("Buscando pedidos..."):
-            st.session_state["vendas_pedidos"]    = buscar_pedidos(inicio, fim, filiais_ids=filiais_ids)
-            try:
-                st.session_state["vendas_orcamentos"] = buscar_orcamentos(inicio, fim)
-            except Exception:
-                st.session_state["vendas_orcamentos"] = []
-                st.warning("⚠️ Orçamentos indisponíveis no momento — exibindo apenas pedidos.")
-            st.session_state["vendas_periodo"]    = label_periodo
-
-    with st.spinner("Processando..."):
+    if "v_pedidos" not in st.session_state:
+        st.info("👆 Clique em **Carregar dados de Vendas** para buscar.")
+    else:
         try:
-            pedidos    = st.session_state.get("vendas_pedidos", [])
-            orcamentos = st.session_state.get("vendas_orcamentos", [])
+            pedidos    = st.session_state["v_pedidos"]
+            orcamentos = st.session_state["v_orc"]
+            valor_total= sum(p.get("valorTotalPedido",0) or 0 for p in pedidos)
+            sit_p = Counter(p.get("situacaoPedido","?") for p in pedidos)
+            sit_o = Counter(o.get("situacao","?") for o in orcamentos)
+            orc_ok= sit_o.get("APROVADO",0)+sit_o.get("CONCLUIDO",0)
+            conv  = (orc_ok/len(orcamentos)*100) if orcamentos else 0
 
-            from collections import Counter
-            valor_total = sum(p.get("valorTotalPedido", 0) or 0 for p in pedidos)
-            sit_pedidos = Counter(p.get("situacaoPedido", "?") for p in pedidos)
-            sit_orc     = Counter(o.get("situacao", "?") for o in orcamentos)
-            orc_aprov   = sit_orc.get("APROVADO", 0) + sit_orc.get("CONCLUIDO", 0)
-            taxa_conv   = (orc_aprov / len(orcamentos) * 100) if orcamentos else 0
-            if not orcamentos:
-                st.info("ℹ️ Orçamentos temporariamente indisponíveis na API do CRTI.")
-
-            # KPIs
-            c1, c2, c3, c4, c5 = st.columns(5)
+            c1,c2,c3,c4,c5 = st.columns(5)
             with c1: st.markdown(kpi("Pedidos", len(pedidos)), unsafe_allow_html=True)
             with c2: st.markdown(kpi("Valor Total", fmt_brl(valor_total)), unsafe_allow_html=True)
             with c3: st.markdown(kpi("Ticket Médio", fmt_brl(valor_total/len(pedidos) if pedidos else 0)), unsafe_allow_html=True)
             with c4: st.markdown(kpi("Orçamentos", len(orcamentos)), unsafe_allow_html=True)
-            with c5: st.markdown(kpi("Conversão ORC→PED", fmt_pct(taxa_conv),
-                                     delta="⚠️ Baixa" if taxa_conv < 30 else "✓ Boa",
-                                     delta_type="warn" if taxa_conv < 30 else "up"),
-                                 unsafe_allow_html=True)
+            with c5: st.markdown(kpi("Conversão", fmt_pct(conv),
+                delta="⚠️ Baixa" if conv < 30 else "✓ Boa",
+                delta_type="warn" if conv < 30 else "up"), unsafe_allow_html=True)
+
+            if not orcamentos:
+                st.warning("⚠️ Orçamentos indisponíveis no CRTI no momento.")
 
             st.divider()
-            col_a, col_b = st.columns(2)
-
-            with col_a:
+            ca, cb = st.columns(2)
+            with ca:
                 st.subheader("Pedidos por Situação")
-                if sit_pedidos:
-                    df_sit = pd.DataFrame(list(sit_pedidos.items()), columns=["Situação", "Qtde"])
+                if sit_p:
+                    df = pd.DataFrame(list(sit_p.items()), columns=["Situação","Qtde"])
                     cores = {"CONCLUIDO":"#0A6E3F","APROVADO":"#2C5F9E",
                              "AGUARDANDO_APROVACAO":"#F39C12","CANCELADO":"#C0392B"}
-                    fig = px.pie(df_sit, values="Qtde", names="Situação",
-                                 color="Situação",
-                                 color_discrete_map=cores,
-                                 template="plotly_white")
-                    fig.update_layout(margin=dict(t=10,b=10))
+                    fig = px.pie(df, values="Qtde", names="Situação",
+                                 color="Situação", color_discrete_map=cores, template="plotly_white")
                     st.plotly_chart(fig, use_container_width=True)
-
-            with col_b:
-                st.subheader("Top 10 Clientes por Valor")
-                clientes_val = Counter()
+            with cb:
+                st.subheader("Top 10 Clientes")
+                cv = Counter()
                 for p in pedidos:
-                    cli = (p.get("cliente") or {}).get("nomeRazao", "?")
-                    clientes_val[cli] += p.get("valorTotalPedido", 0) or 0
-                if clientes_val:
-                    df_cli = pd.DataFrame(clientes_val.most_common(10), columns=["Cliente","Valor"])
-                    df_cli["Valor_fmt"] = df_cli["Valor"].apply(fmt_brl)
-                    fig2 = px.bar(df_cli.sort_values("Valor"), x="Valor", y="Cliente",
-                                  orientation="h", text="Valor_fmt",
-                                  color_discrete_sequence=["#1A3C6E"],
-                                  template="plotly_white")
-                    fig2.update_layout(showlegend=False, margin=dict(t=10))
+                    cli = (p.get("cliente") or {}).get("nomeRazao","?")
+                    cv[cli] += p.get("valorTotalPedido",0) or 0
+                if cv:
+                    df2 = pd.DataFrame(cv.most_common(10), columns=["Cliente","Valor"])
+                    df2["vf"] = df2["Valor"].apply(fmt_brl)
+                    fig2 = px.bar(df2.sort_values("Valor"), x="Valor", y="Cliente",
+                                  orientation="h", text="vf",
+                                  color_discrete_sequence=["#1A3C6E"], template="plotly_white")
+                    fig2.update_layout(showlegend=False)
                     st.plotly_chart(fig2, use_container_width=True)
 
-            # Vendedores
-            st.subheader("Performance por Vendedor")
-            vend_val = Counter()
+            st.subheader("Ranking de Vendedores")
+            vv = Counter()
             for p in pedidos:
-                v = (p.get("vendedorPedido") or {}).get("nomeVendedor", "Sem vendedor")
-                vend_val[v] += p.get("valorTotalPedido", 0) or 0
-            if vend_val:
-                df_vend = pd.DataFrame(vend_val.most_common(), columns=["Vendedor","Valor"])
-                df_vend["Valor_fmt"] = df_vend["Valor"].apply(fmt_brl)
-                df_vend["%"] = (df_vend["Valor"] / df_vend["Valor"].sum() * 100).round(1).astype(str) + "%"
-                st.dataframe(df_vend, use_container_width=True, hide_index=True)
+                v = (p.get("vendedorPedido") or {}).get("nomeVendedor","Sem vendedor")
+                vv[v] += p.get("valorTotalPedido",0) or 0
+            if vv:
+                df3 = pd.DataFrame(vv.most_common(), columns=["Vendedor","Valor"])
+                df3["Valor_fmt"] = df3["Valor"].apply(fmt_brl)
+                df3["%"] = (df3["Valor"]/df3["Valor"].sum()*100).round(1).astype(str)+"%"
+                st.dataframe(df3[["Vendedor","Valor_fmt","%"]], use_container_width=True, hide_index=True)
 
-            # Tabela de pedidos
             st.subheader("Pedidos do Período")
             if pedidos:
-                df_ped = pd.DataFrame(pedidos)
-                if "cliente" in df_ped.columns:
-                    df_ped["cliente_nome"] = df_ped["cliente"].apply(
-                        lambda x: x.get("nomeRazao","") if isinstance(x,dict) else "")
-                if "vendedorPedido" in df_ped.columns:
-                    df_ped["vendedor"] = df_ped["vendedorPedido"].apply(
-                        lambda x: x.get("nomeVendedor","") if isinstance(x,dict) else "")
-                cols = [c for c in ["id","cliente_nome","dataPedido","situacaoPedido",
-                                    "valorTotalPedido","vendedor","tipoFrete"] if c in df_ped.columns]
-                filtro_v = st.text_input("🔍 Filtrar pedidos")
-                df_show = df_ped[cols].copy()
-                if filtro_v:
-                    mask = df_show.apply(lambda r: r.astype(str).str.contains(filtro_v, case=False).any(), axis=1)
-                    df_show = df_show[mask]
-                st.dataframe(df_show, use_container_width=True, height=350)
-
+                df4 = pd.DataFrame(pedidos)
+                if "cliente" in df4.columns:
+                    df4["cliente_nome"] = df4["cliente"].apply(lambda x: x.get("nomeRazao","") if isinstance(x,dict) else "")
+                if "vendedorPedido" in df4.columns:
+                    df4["vendedor"] = df4["vendedorPedido"].apply(lambda x: x.get("nomeVendedor","") if isinstance(x,dict) else "")
+                cols = [c for c in ["id","cliente_nome","dataPedido","situacaoPedido","valorTotalPedido","vendedor"] if c in df4.columns]
+                flt = st.text_input("🔍 Filtrar")
+                df_s = df4[cols].copy()
+                if flt:
+                    mask = df_s.apply(lambda r: r.astype(str).str.contains(flt,case=False).any(), axis=1)
+                    df_s = df_s[mask]
+                st.dataframe(df_s, use_container_width=True, height=350)
         except Exception as e:
             st.error(f"Erro: {e}")
 
 
+# ════════════════════════════════════════
+#  CLIENTES INATIVOS
+# ════════════════════════════════════════
 elif pagina == "👥 Clientes Inativos":
-    st.markdown("""
-    <div class="main-header">
+    st.markdown("""<div class="main-header">
         <h1>👥 Clientes Inativos</h1>
-        <p>Clientes que pararam de comprar — análise e estratégia de reativação</p>
-    </div>
-    """, unsafe_allow_html=True)
+        <p>Clientes que pararam de comprar — estratégia de reativação</p></div>""", unsafe_allow_html=True)
 
-    col_cfg1, col_cfg2 = st.columns(2)
-    with col_cfg1:
-        dias_inativo = st.slider("Considerar inativo após X dias sem comprar", 30, 180, 60, 10)
-    with col_cfg2:
-        st.caption(f"Analisando histórico dos últimos 365 dias")
+    dias = st.slider("Considerar inativo após X dias sem comprar", 30, 180, 60, 10)
 
-    col_btn2, col_aviso = st.columns([1, 3])
-    with col_btn2:
-        carregar_inativos = st.button("🔍 Analisar Carteira", use_container_width=True)
-    with col_aviso:
-        st.caption("⏱️ Esta análise busca 365 dias de histórico — pode levar 30-60 segundos.")
+    c1, c2 = st.columns([1,3])
+    with c1:
+        analisar = st.button("🔍 Analisar Carteira", use_container_width=True)
+    with c2:
+        st.caption("⏱️ Analisa 365 dias de histórico — pode levar 30-60 segundos.")
 
-    if not carregar_inativos and "clientes_inativos_data" not in st.session_state:
+    if analisar:
+        with st.spinner("Analisando histórico de clientes..."):
+            st.session_state["inat_dados"] = _clientes_inativos(dias)
+
+    if "inat_dados" not in st.session_state:
         st.info("👆 Clique em **Analisar Carteira** para identificar clientes inativos.")
-        st.stop()
-
-    if carregar_inativos:
-        with st.spinner("Analisando 365 dias de histórico... aguarde..."):
-            st.session_state["clientes_inativos_data"] = buscar_clientes_inativos_cache(dias=dias_inativo)
-
-    with st.spinner("Processando..."):
+    else:
         try:
-            dados = st.session_state.get("clientes_inativos_data", {})
-            resumo   = dados["resumo"]
-            inativos = dados["inativos"]
-            ativos   = dados["ativos_recentes"]
+            dados    = st.session_state["inat_dados"]
+            resumo   = dados.get("resumo", {})
+            inativos = dados.get("inativos", [])
+            ativos   = dados.get("ativos_recentes", [])
 
-            # KPIs
-            c1, c2, c3, c4 = st.columns(4)
-            with c1: st.markdown(kpi("Total Clientes", resumo["total_clientes"]), unsafe_allow_html=True)
-            with c2: st.markdown(kpi("Inativos", resumo["inativos"],
-                                     delta=f"⚠️ {resumo['pct_inativo']}% da carteira",
-                                     delta_type="warn"), unsafe_allow_html=True)
-            with c3: st.markdown(kpi("Ativos", resumo["ativos"],
-                                     delta="✓ Compraram recentemente",
-                                     delta_type="up"), unsafe_allow_html=True)
+            c1,c2,c3,c4 = st.columns(4)
+            with c1: st.markdown(kpi("Total Clientes", resumo.get("total_clientes",0)), unsafe_allow_html=True)
+            with c2: st.markdown(kpi("Inativos", resumo.get("inativos",0),
+                delta=f"⚠️ {resumo.get('pct_inativo',0)}% da carteira", delta_type="warn"), unsafe_allow_html=True)
+            with c3: st.markdown(kpi("Ativos", resumo.get("ativos",0),
+                delta="✓ Compraram recentemente", delta_type="up"), unsafe_allow_html=True)
             valor_risco = sum(c.get("total_historico",0) for c in inativos)
             with c4: st.markdown(kpi("Receita em Risco", fmt_brl(valor_risco),
-                                     delta="⚠️ Valor histórico inativos",
-                                     delta_type="warn"), unsafe_allow_html=True)
+                delta="⚠️ Valor histórico", delta_type="warn"), unsafe_allow_html=True)
 
             st.divider()
-
-            # Gráfico de inatividade
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.subheader("Distribuição por Tempo Inativo")
+            ca, cb = st.columns(2)
+            with ca:
+                st.subheader("Por Tempo de Inatividade")
                 if inativos:
-                    bins = {"60-90 dias":0, "90-120 dias":0, "120-180 dias":0, "+180 dias":0}
+                    bins = {"60-90d":0,"90-120d":0,"120-180d":0,"+180d":0}
                     for c in inativos:
                         d = c["dias_sem_comprar"]
-                        if d <= 90:   bins["60-90 dias"] += 1
-                        elif d <= 120: bins["90-120 dias"] += 1
-                        elif d <= 180: bins["120-180 dias"] += 1
-                        else:          bins["+180 dias"] += 1
-                    df_bins = pd.DataFrame(list(bins.items()), columns=["Período","Qtde"])
-                    fig = px.bar(df_bins, x="Período", y="Qtde",
-                                 color="Qtde",
-                                 color_continuous_scale=["#FFF3CD","#C0392B"],
-                                 template="plotly_white")
-                    fig.update_layout(showlegend=False, margin=dict(t=10))
+                        if d<=90: bins["60-90d"]+=1
+                        elif d<=120: bins["90-120d"]+=1
+                        elif d<=180: bins["120-180d"]+=1
+                        else: bins["+180d"]+=1
+                    df = pd.DataFrame(list(bins.items()), columns=["Grupo","Qtde"])
+                    fig = px.bar(df, x="Grupo", y="Qtde", color="Qtde",
+                                 color_continuous_scale=["#FFF3CD","#C0392B"], template="plotly_white")
+                    fig.update_layout(showlegend=False)
                     st.plotly_chart(fig, use_container_width=True)
-
-            with col_b:
+            with cb:
                 st.subheader("Valor em Risco por Grupo")
                 if inativos:
-                    grupos = {"60-90 dias":0,"90-120 dias":0,"120-180 dias":0,"+180 dias":0}
+                    gv = {"60-90d":0,"90-120d":0,"120-180d":0,"+180d":0}
                     for c in inativos:
-                        d = c["dias_sem_comprar"]
-                        v = c["total_historico"]
-                        if d <= 90:    grupos["60-90 dias"] += v
-                        elif d <= 120: grupos["90-120 dias"] += v
-                        elif d <= 180: grupos["120-180 dias"] += v
-                        else:          grupos["+180 dias"] += v
-                    df_g = pd.DataFrame(list(grupos.items()), columns=["Grupo","Valor"])
-                    fig2 = px.pie(df_g, values="Valor", names="Grupo",
+                        d,v = c["dias_sem_comprar"], c["total_historico"]
+                        if d<=90: gv["60-90d"]+=v
+                        elif d<=120: gv["90-120d"]+=v
+                        elif d<=180: gv["120-180d"]+=v
+                        else: gv["+180d"]+=v
+                    df2 = pd.DataFrame(list(gv.items()), columns=["Grupo","Valor"])
+                    fig2 = px.pie(df2, values="Valor", names="Grupo",
                                   color_discrete_sequence=["#F39C12","#E67E22","#E74C3C","#C0392B"],
                                   template="plotly_white")
-                    fig2.update_layout(margin=dict(t=10))
                     st.plotly_chart(fig2, use_container_width=True)
 
-            # Tabela de inativos
             st.subheader("🔴 Lista de Clientes Inativos")
             if inativos:
-                df_inat = pd.DataFrame(inativos)
-                df_inat["total_historico"] = df_inat["total_historico"].apply(fmt_brl)
-                df_inat["ticket_medio"]    = df_inat["ticket_medio"].apply(fmt_brl)
-                df_inat.columns = [c.replace("nome","Cliente").replace("ultima_compra","Último Pedido")
-                                    .replace("dias_sem_comprar","Dias Inativo")
-                                    .replace("total_historico","Total Histórico")
-                                    .replace("qtde_pedidos","Qtde Pedidos")
-                                    .replace("ticket_medio","Ticket Médio")
-                                    for c in df_inat.columns]
-                cols_show = [c for c in ["Cliente","Último Pedido","Dias Inativo",
-                                          "Total Histórico","Qtde Pedidos","Ticket Médio"]
-                             if c in df_inat.columns]
-                st.dataframe(df_inat[cols_show], use_container_width=True, height=400)
-
-                # Download
-                csv = df_inat[cols_show].to_csv(index=False).encode("utf-8-sig")
-                st.download_button("⬇️ Exportar lista para Excel/CSV",
-                                   data=csv, file_name="clientes_inativos.csv",
-                                   mime="text/csv")
-
+                df3 = pd.DataFrame(inativos)
+                df3["total_historico"] = df3["total_historico"].apply(fmt_brl)
+                df3["ticket_medio"]    = df3["ticket_medio"].apply(fmt_brl)
+                cols = [c for c in ["nome","ultima_compra","dias_sem_comprar",
+                                    "total_historico","qtde_pedidos","ticket_medio"] if c in df3.columns]
+                st.dataframe(df3[cols], use_container_width=True, height=400)
+                csv = df3[cols].to_csv(index=False).encode("utf-8-sig")
+                st.download_button("⬇️ Exportar CSV", data=csv,
+                                   file_name="clientes_inativos.csv", mime="text/csv")
         except Exception as e:
             st.error(f"Erro: {e}")
 
 
+# ════════════════════════════════════════
+#  FROTA
+# ════════════════════════════════════════
+elif pagina == "🚜 Frota e Equipamentos":
+    st.markdown(f"""<div class="main-header">
+        <h1>🚜 Frota e Equipamentos</h1>
+        <p>Patrimônio, seguros e horímetros · {label_periodo}</p></div>""", unsafe_allow_html=True)
+
+    with st.spinner("Carregando equipamentos..."):
+        try:
+            from modules.resumidor import resumir_equipamentos
+            equip = _equipamentos()
+            res   = resumir_equipamentos(equip)
+
+            c1,c2,c3,c4,c5 = st.columns(5)
+            with c1: st.markdown(kpi("Total", res["total_equipamentos"]), unsafe_allow_html=True)
+            with c2: st.markdown(kpi("Valor Aquisição", f"R${res['valor_aquisicao_total']/1e6:.1f}M"), unsafe_allow_html=True)
+            with c3: st.markdown(kpi("Depreciação", fmt_pct(res["depreciacao_pct"]),
+                delta="⚠️ Alto" if res["depreciacao_pct"]>60 else "Normal",
+                delta_type="warn" if res["depreciacao_pct"]>60 else "up"), unsafe_allow_html=True)
+            with c4: st.markdown(kpi("Seguros Vencidos", res["seguros_vencidos"],
+                delta="⚠️ Urgente" if res["seguros_vencidos"] else "✓ OK",
+                delta_type="warn" if res["seguros_vencidos"] else "up"), unsafe_allow_html=True)
+            with c5: st.markdown(kpi("De Terceiros", res["de_subempreiteiros"]), unsafe_allow_html=True)
+
+            st.divider()
+            ca, cb = st.columns(2)
+            with ca:
+                st.subheader("Por Grupo")
+                if res["por_grupo"]:
+                    df = pd.DataFrame(list(res["por_grupo"].items()), columns=["Grupo","Qtde"])
+                    df = df.sort_values("Qtde", ascending=False).head(12)
+                    fig = px.bar(df, x="Qtde", y="Grupo", orientation="h",
+                                 color="Qtde", color_continuous_scale=["#BDD0F0","#1A3C6E"],
+                                 template="plotly_white")
+                    fig.update_layout(yaxis=dict(categoryorder="total ascending"),
+                                      showlegend=False)
+                    st.plotly_chart(fig, use_container_width=True)
+            with cb:
+                st.subheader("⚠️ Seguros Vencidos")
+                if res["lista_seguros_vencidos"]:
+                    df2 = pd.DataFrame(res["lista_seguros_vencidos"])
+                    df2 = df2[["descricao","placa","vencimento","valor_cobertura"]].copy()
+                    df2.columns = ["Equipamento","Placa","Vencimento","Cobertura"]
+                    df2["Cobertura"] = df2["Cobertura"].apply(lambda v: fmt_brl(v) if v else "—")
+                    st.dataframe(df2, use_container_width=True, height=300)
+                else:
+                    st.success("✅ Nenhum seguro vencido!")
+
+            st.subheader("Cadastro Completo")
+            df3 = pd.DataFrame(equip)
+            cols = [c for c in ["id","descricao","placa","descricaoGrupoEquipamento",
+                                 "nomeFilialAtual","ultimoHorometroOdometro",
+                                 "valorAquisicao","valorMercado","vencimentoSeguro"] if c in df3.columns]
+            flt = st.text_input("🔍 Filtrar equipamento")
+            dfs = df3[cols].copy()
+            if flt:
+                mask = dfs.apply(lambda r: r.astype(str).str.contains(flt,case=False).any(), axis=1)
+                dfs = dfs[mask]
+            st.dataframe(dfs, use_container_width=True, height=400)
+        except Exception as e:
+            st.error(f"Erro: {e}")
+
+
+# ════════════════════════════════════════
+#  MANUTENÇÃO
+# ════════════════════════════════════════
+elif pagina == "🔧 Manutenção":
+    st.markdown(f"""<div class="main-header">
+        <h1>🔧 Manutenção</h1>
+        <p>Ordens de serviço · {label_periodo}</p></div>""", unsafe_allow_html=True)
+
+    with st.spinner("Carregando OS..."):
+        try:
+            from modules.resumidor import resumir_os_manutencao
+            os_l = _os(inicio, fim)
+            res  = resumir_os_manutencao(os_l)
+
+            c1,c2,c3,c4 = st.columns(4)
+            with c1: st.markdown(kpi("Total OS", res["total_os"]), unsafe_allow_html=True)
+            with c2: st.markdown(kpi("Atrasadas", res["os_atrasadas"],
+                delta="⚠️ Ação" if res["os_atrasadas"] else "✓ OK",
+                delta_type="warn" if res["os_atrasadas"] else "up"), unsafe_allow_html=True)
+            with c3: st.markdown(kpi("Equip. em OS", len(res["top_10_equipamentos"])), unsafe_allow_html=True)
+            with c4: st.markdown(kpi("Tipos Defeito", len(res["top_10_defeitos"])), unsafe_allow_html=True)
+
+            st.divider()
+            ca, cb = st.columns(2)
+            with ca:
+                st.subheader("OS por Situação")
+                if res["por_situacao"]:
+                    df = pd.DataFrame(list(res["por_situacao"].items()), columns=["Situação","Qtde"])
+                    fig = px.pie(df, values="Qtde", names="Situação",
+                                 color_discrete_sequence=px.colors.sequential.Blues_r,
+                                 template="plotly_white")
+                    st.plotly_chart(fig, use_container_width=True)
+            with cb:
+                st.subheader("Top Defeitos")
+                if res["top_10_defeitos"]:
+                    df2 = pd.DataFrame(list(res["top_10_defeitos"].items()), columns=["Defeito","Qtde"])
+                    fig2 = px.bar(df2.sort_values("Qtde"), x="Qtde", y="Defeito",
+                                  orientation="h", color_discrete_sequence=["#2C5F9E"],
+                                  template="plotly_white")
+                    st.plotly_chart(fig2, use_container_width=True)
+
+            if res["lista_atrasadas"]:
+                st.subheader("⚠️ OS Atrasadas")
+                st.dataframe(pd.DataFrame(res["lista_atrasadas"]), use_container_width=True)
+
+            st.subheader("Todas as OS")
+            df3 = pd.DataFrame(os_l)
+            if not df3.empty:
+                if "equipamento" in df3.columns:
+                    df3["equip_nome"] = df3["equipamento"].apply(lambda x: x.get("descricao","") if isinstance(x,dict) else "")
+                cols = [c for c in ["id","equip_nome","dataAbertura","dataPrevTermino",
+                                    "situacao","tipo","defeito"] if c in df3.columns]
+                flt = st.text_input("🔍 Filtrar OS")
+                dfs = df3[cols].copy()
+                if flt:
+                    mask = dfs.apply(lambda r: r.astype(str).str.contains(flt,case=False).any(), axis=1)
+                    dfs = dfs[mask]
+                st.dataframe(dfs, use_container_width=True, height=400)
+        except Exception as e:
+            st.error(f"Erro: {e}")
+
+
+# ════════════════════════════════════════
+#  FINANCEIRO
+# ════════════════════════════════════════
+elif pagina == "💳 Financeiro":
+    st.markdown(f"""<div class="main-header">
+        <h1>💳 Financeiro</h1>
+        <p>Contas a pagar e receber · {label_periodo}</p></div>""", unsafe_allow_html=True)
+
+    with st.spinner("Carregando transferências..."):
+        try:
+            from modules.resumidor import resumir_transferencias
+            trf = _transferencias(inicio, fim)
+            res = resumir_transferencias(trf)
+
+            c1,c2,c3,c4,c5 = st.columns(5)
+            with c1: st.markdown(kpi("Documentos", res["total_documentos"]), unsafe_allow_html=True)
+            with c2: st.markdown(kpi("Valor Total", fmt_brl(res["valor_total_emitido"])), unsafe_allow_html=True)
+            with c3: st.markdown(kpi("Valor Líquido", fmt_brl(res["valor_liquido_total"])), unsafe_allow_html=True)
+            with c4: st.markdown(kpi("Juros", fmt_brl(res["total_juros"]),
+                delta="⚠️ Alto" if res["total_juros"]>10000 else "Normal",
+                delta_type="warn" if res["total_juros"]>10000 else "up"), unsafe_allow_html=True)
+            with c5: st.markdown(kpi("Ticket Médio", fmt_brl(res["ticket_medio"])), unsafe_allow_html=True)
+
+            st.divider()
+            ca, cb = st.columns(2)
+            with ca:
+                st.subheader("Top 15 Fornecedores")
+                if res["top_15_fornecedores"]:
+                    df = pd.DataFrame(res["top_15_fornecedores"])
+                    df["vf"] = df["valor"].apply(fmt_brl)
+                    fig = px.bar(df.sort_values("valor"), x="valor", y="fornecedor",
+                                 orientation="h", text="vf",
+                                 color_discrete_sequence=["#1A3C6E"], template="plotly_white")
+                    fig.update_layout(showlegend=False)
+                    st.plotly_chart(fig, use_container_width=True)
+            with cb:
+                st.subheader("Por Mês")
+                if res["distribuicao_por_mes"]:
+                    df2 = pd.DataFrame(list(res["distribuicao_por_mes"].items()), columns=["Mês","Qtde"])
+                    fig2 = px.bar(df2.sort_values("Mês"), x="Mês", y="Qtde",
+                                  color_discrete_sequence=["#2C5F9E"], template="plotly_white")
+                    st.plotly_chart(fig2, use_container_width=True)
+
+            st.subheader("Lançamentos")
+            df3 = pd.DataFrame(res["amostra_documentos"])
+            if not df3.empty:
+                if "fornecedor" in df3.columns:
+                    df3["forn_nome"] = df3["fornecedor"].apply(lambda x: x.get("nomeRazao","") if isinstance(x,dict) else "")
+                cols = [c for c in ["id","forn_nome","numeroDocumento","dataEmissao",
+                                    "valorTotalDocumento","valorLiquido"] if c in df3.columns]
+                st.dataframe(df3[cols], use_container_width=True, height=350)
+        except Exception as e:
+            st.error(f"Erro: {e}")
+
+
+# ════════════════════════════════════════
+#  COMPRAS
+# ════════════════════════════════════════
+elif pagina == "🛒 Compras":
+    st.markdown(f"""<div class="main-header">
+        <h1>🛒 Compras</h1>
+        <p>Pipeline de requisições · {label_periodo}</p></div>""", unsafe_allow_html=True)
+
+    with st.spinner("Carregando compras..."):
+        try:
+            from modules.resumidor import resumir_compras
+            dados = _compras(inicio, fim)
+            res   = resumir_compras(dados)
+
+            c1,c2,c3,c4,c5 = st.columns(5)
+            with c1: st.markdown(kpi("Requisições", res["total_requisicoes"]), unsafe_allow_html=True)
+            with c2: st.markdown(kpi("Ordens Compra", res["total_ocs"]), unsafe_allow_html=True)
+            with c3: st.markdown(kpi("OCs Sem Processo", res["ocs_diretas_sem_req"],
+                delta="⚠️ Auditar" if res["ocs_diretas_sem_req"] else "✓ OK",
+                delta_type="warn" if res["ocs_diretas_sem_req"] else "up"), unsafe_allow_html=True)
+            with c4: st.markdown(kpi("Valor Total", fmt_brl(res["valor_total_comprado"])), unsafe_allow_html=True)
+            with c5: st.markdown(kpi("Frete %", fmt_pct(res["frete_pct"]),
+                delta="⚠️ Alto" if res["frete_pct"]>10 else "Normal",
+                delta_type="warn" if res["frete_pct"]>10 else "up"), unsafe_allow_html=True)
+
+            st.divider()
+            ca, cb = st.columns(2)
+            with ca:
+                st.subheader("Top Fornecedores")
+                if res["top_15_fornecedores"]:
+                    df = pd.DataFrame(res["top_15_fornecedores"])
+                    df["vf"] = df["valor"].apply(fmt_brl)
+                    fig = px.bar(df.sort_values("valor"), x="valor", y="fornecedor",
+                                 orientation="h", text="vf",
+                                 color_discrete_sequence=["#4A235A"], template="plotly_white")
+                    fig.update_layout(showlegend=False)
+                    st.plotly_chart(fig, use_container_width=True)
+            with cb:
+                st.subheader("Composição do Valor")
+                df2 = pd.DataFrame({
+                    "Tipo": ["Mercadorias","Frete","Desconto"],
+                    "Valor": [res["valor_mercadorias"], res["valor_frete"], abs(res["valor_desconto"])]
+                })
+                fig2 = go.Figure(go.Pie(
+                    labels=df2["Tipo"], values=df2["Valor"],
+                    marker_colors=["#1A3C6E","#F39C12","#0A6E3F"], hole=0.4))
+                st.plotly_chart(fig2, use_container_width=True)
+        except Exception as e:
+            st.error(f"Erro: {e}")
+
+
+# ════════════════════════════════════════
+#  MATERIAIS
+# ════════════════════════════════════════
 elif pagina == "📦 Materiais":
-    st.markdown("""
-    <div class="main-header">
+    st.markdown("""<div class="main-header">
         <h1>📦 Materiais e Suprimentos</h1>
-        <p>Cadastro, qualidade de dados e controle de estoque</p>
-    </div>
-    """, unsafe_allow_html=True)
+        <p>Cadastro e qualidade de dados</p></div>""", unsafe_allow_html=True)
 
     with st.spinner("Carregando materiais..."):
         try:
-            materiais = buscar_materiais()
-            res = resumir_materiais(materiais)
+            from modules.resumidor import resumir_materiais
+            mats = _materiais()
+            res  = resumir_materiais(mats)
 
-            c1, c2, c3, c4, c5 = st.columns(5)
+            c1,c2,c3,c4,c5 = st.columns(5)
             with c1: st.markdown(kpi("Total", res["total_materiais"]), unsafe_allow_html=True)
             with c2: st.markdown(kpi("Ativos", res["ativos"]), unsafe_allow_html=True)
             with c3: st.markdown(kpi("Sem NCM", res["sem_ncm"],
-                                     delta="⚠️ Risco fiscal" if res["sem_ncm"] > 0 else "✓ OK",
-                                     delta_type="warn" if res["sem_ncm"] > 0 else "up"),
-                                 unsafe_allow_html=True)
+                delta="⚠️ Risco fiscal" if res["sem_ncm"] else "✓ OK",
+                delta_type="warn" if res["sem_ncm"] else "up"), unsafe_allow_html=True)
             with c4: st.markdown(kpi("Sem Preço", res["sem_preco"],
-                                     delta="⚠️ Incompleto" if res["sem_preco"] > 0 else "✓ OK",
-                                     delta_type="warn" if res["sem_preco"] > 0 else "up"),
-                                 unsafe_allow_html=True)
+                delta="⚠️" if res["sem_preco"] else "✓ OK",
+                delta_type="warn" if res["sem_preco"] else "up"), unsafe_allow_html=True)
             with c5: st.markdown(kpi("Completude", fmt_pct(res["completude_pct"])), unsafe_allow_html=True)
 
             st.divider()
-
-            col_a, col_b = st.columns(2)
-
-            with col_a:
-                st.subheader("Materiais por Grupo")
+            ca, cb = st.columns(2)
+            with ca:
+                st.subheader("Por Grupo")
                 if res["por_grupo"]:
-                    df_g = pd.DataFrame(list(res["por_grupo"].items()), columns=["Grupo", "Qtde"])
-                    df_g = df_g.sort_values("Qtde", ascending=False).head(10)
-                    fig = px.bar(df_g, x="Qtde", y="Grupo", orientation="h",
-                                 color_discrete_sequence=["#0A6E3F"],
-                                 template="plotly_white")
-                    fig.update_layout(yaxis=dict(categoryorder="total ascending"),
-                                      showlegend=False, margin=dict(t=10))
+                    df = pd.DataFrame(list(res["por_grupo"].items()), columns=["Grupo","Qtde"])
+                    df = df.sort_values("Qtde", ascending=False).head(10)
+                    fig = px.bar(df, x="Qtde", y="Grupo", orientation="h",
+                                 color_discrete_sequence=["#0A6E3F"], template="plotly_white")
+                    fig.update_layout(yaxis=dict(categoryorder="total ascending"), showlegend=False)
                     st.plotly_chart(fig, use_container_width=True)
-
-            with col_b:
+            with cb:
                 st.subheader("Problemas no Cadastro")
-                df_prob = pd.DataFrame({
-                    "Problema": ["Sem NCM", "Sem preço", "Sem grupo", "Sem EAN", "Inativos"],
-                    "Qtde": [res["sem_ncm"], res["sem_preco"], res["sem_grupo"],
-                              res["sem_ean"], res["inativos"]]
+                df2 = pd.DataFrame({
+                    "Problema": ["Sem NCM","Sem preço","Sem grupo","Sem EAN","Inativos"],
+                    "Qtde": [res["sem_ncm"],res["sem_preco"],res["sem_grupo"],res["sem_ean"],res["inativos"]]
                 })
-                fig2 = px.bar(df_prob, x="Qtde", y="Problema", orientation="h",
-                               color="Qtde",
-                               color_continuous_scale=["#FFF3CD", "#C0392B"],
-                               template="plotly_white")
-                fig2.update_layout(showlegend=False, margin=dict(t=10))
+                fig2 = px.bar(df2, x="Qtde", y="Problema", orientation="h",
+                              color="Qtde", color_continuous_scale=["#FFF3CD","#C0392B"],
+                              template="plotly_white")
+                fig2.update_layout(showlegend=False)
                 st.plotly_chart(fig2, use_container_width=True)
-
         except Exception as e:
             st.error(f"Erro: {e}")
 
 
-# ─────────────────────────────────────────────
-#  PÁGINA 7 — GERAR RELATÓRIO COM IA
-# ─────────────────────────────────────────────
+# ════════════════════════════════════════
+#  GERAR RELATÓRIO COM IA
+# ════════════════════════════════════════
 elif pagina == "🤖 Gerar Relatório com IA":
-    st.markdown("""
-    <div class="main-header">
+    st.markdown("""<div class="main-header">
         <h1>🤖 Gerar Relatório com IA</h1>
-        <p>O Claude analisa os dados e escreve um relatório executivo completo em PDF</p>
-    </div>
-    """, unsafe_allow_html=True)
+        <p>Claude analisa os dados e escreve um relatório executivo em PDF</p></div>""", unsafe_allow_html=True)
 
-    # Seleção do relatório
-    col_sel, col_info = st.columns([1, 2])
+    descricoes = {
+        "🛍️ Análise de Vendas":           "Pedidos, orçamentos, top clientes, vendedores, taxa de conversão.",
+        "👥 Clientes Inativos":            "Identifica clientes que pararam de comprar. Estratégia de reativação por grupo de urgência.",
+        "🚜 Auditoria de Frota":           "Seguros vencidos, OS atrasadas, anormalidades, score de saúde da frota.",
+        "🔧 Relatório de Manutenção":      "OS por período, defeitos frequentes, tempo de resolução, equipe.",
+        "📋 Patrimônio da Frota":          "Depreciação, cobertura de seguros, próprios vs terceiros.",
+        "💳 Auditoria Financeira":         "Duplicatas, valores suspeitos, concentração de fornecedores.",
+        "💳 Análise Financeira Mensal":    "Fluxo de caixa, posição bancária, ticket médio, recomendações.",
+        "🛒 Auditoria de Compras":         "Bypass de processo, favorecimento de fornecedor, OCs sem entrega.",
+        "🛒 Relatório Gerencial de Compras":"Volume, top fornecedores, frete %, descontos, lead times.",
+        "📦 Auditoria de Materiais":       "NCM ausente, sem preço, score de qualidade do cadastro.",
+    }
 
-    with col_sel:
-        tipo_relatorio = st.selectbox(
-            "Tipo de Relatório",
-            options=[
-                "🛍️ Análise de Vendas",
-                "👥 Clientes Inativos — Estratégia de Reativação",
-                "🚜 Auditoria de Frota",
-                "🔧 Relatório de Manutenção",
-                "📋 Patrimônio da Frota",
-                "💳 Auditoria Financeira",
-                "💳 Análise Financeira Mensal",
-                "🛒 Auditoria de Compras",
-                "🛒 Relatório Gerencial de Compras",
-                "📦 Auditoria de Materiais",
-            ]
-        )
-
-        st.caption(f"📅 Período: **{label_periodo}**")
-
+    c1, c2 = st.columns([1,2])
+    with c1:
+        tipo = st.selectbox("Tipo de Relatório", list(descricoes.keys()))
+        st.caption(f"📅 {label_periodo}")
         gerar = st.button("🚀 Gerar Relatório Agora", use_container_width=True)
+    with c2:
+        st.info(descricoes[tipo])
 
-    with col_info:
-        descricoes = {
-            "🛍️ Análise de Vendas": "Analisa pedidos e orçamentos do período: volume, top clientes, ranking de vendedores, materiais mais vendidos, taxa de conversão orçamento→pedido.",
-            "👥 Clientes Inativos — Estratégia de Reativação": "Identifica clientes que compraram no histórico mas pararam. Classifica por urgência e sugere estratégia de reativação para cada grupo.",
-            "🚜 Auditoria de Frota": "Analisa 1.309 equipamentos, OS abertas, transferências e seguros. Detecta seguros vencidos, OS atrasadas, anormalidades em transferências e gera score de saúde da frota.",
-            "🔧 Relatório de Manutenção": "Analisa OS do período: taxa de conclusão no prazo, defeitos mais frequentes, equipamentos com mais paradas e eficiência da equipe.",
-            "📋 Patrimônio da Frota": "Inventário patrimonial completo: depreciação por grupo, cobertura de seguros, equipamentos próprios vs terceiros, candidatos a baixa.",
-            "💳 Auditoria Financeira": "Analisa transferências buscando duplicatas, valores atípicos, concentração de fornecedores e inconsistências. Gera score de risco.",
-            "💳 Análise Financeira Mensal": "Visão do CFO: total movimentado, fluxo de caixa, posição bancária, ticket médio e recomendações estratégicas.",
-            "🛒 Auditoria de Compras": "Audita o pipeline completo: OCs sem processo, compras diretas sem cotação, favorecimento de fornecedor, materiais não entregues.",
-            "🛒 Relatório Gerencial de Compras": "Visão gerencial: volume, top fornecedores, frete %, descontos obtidos, lead times.",
-            "📦 Auditoria de Materiais": "Qualidade do cadastro: NCM ausente, sem preço, sem grupo, score de completude e lista dos itens mais incompletos.",
-        }
-        st.info(descricoes.get(tipo_relatorio, ""))
-
-    st.divider()
-
-    # Gerar relatório
     if gerar:
         from Prompts.prompts import (
             prompt_auditoria_frota, prompt_relatorio_manutencao,
             prompt_relatorio_patrimonio_frota, prompt_auditoria_financeira,
             prompt_analise_financeira_mensal, prompt_auditoria_compras,
-            prompt_relatorio_compras_gerencial, prompt_auditoria_materiais
+            prompt_relatorio_compras_gerencial, prompt_auditoria_materiais,
+            prompt_analise_vendas, prompt_clientes_inativos,
         )
-
-        progresso = st.progress(0)
-        status    = st.status("Iniciando...", expanded=True)
-        crti_cli  = get_crti()
-        claude    = get_claude()
-        pdf_gen   = get_pdf()
-
+        prog = st.progress(0)
+        stat = st.status("Iniciando...", expanded=True)
         try:
-            with status:
-                # Coleta de dados
-                st.write("📡 Buscando dados do CRTI ERP...")
-                progresso.progress(15)
+            with stat:
+                st.write("📡 Buscando dados do CRTI...")
+                prog.progress(20)
 
-                if "Análise de Vendas" in tipo_relatorio:
-                    from Prompts.prompts import prompt_analise_vendas
-                    pedidos    = get_crti().buscar_pedidos_material(inicio, fim)
-                    orcamentos = get_crti().buscar_orcamentos_venda(inicio, fim)
-                    prompt     = prompt_analise_vendas(pedidos, orcamentos, label_periodo)
+                crti_cli = get_crti()
+                if "Análise de Vendas" in tipo:
+                    ped = _pedidos(inicio, fim); orc = _orcamentos(inicio, fim)
+                    prompt = prompt_analise_vendas(ped, orc, label_periodo)
                     tipo_pdf, titulo = "vendas", "Análise de Vendas"
-                elif "Clientes Inativos" in tipo_relatorio:
-                    from Prompts.prompts import prompt_clientes_inativos
-                    dados  = get_crti().buscar_clientes_inativos(dias_sem_comprar=60)
+                elif "Clientes Inativos" in tipo:
+                    dados = _clientes_inativos(60)
                     prompt = prompt_clientes_inativos(dados)
-                    tipo_pdf, titulo = "clientes_inativos", "Clientes Inativos — Estratégia de Reativação"
-                elif "Frota" in tipo_relatorio and "Patrimônio" not in tipo_relatorio:
+                    tipo_pdf, titulo = "clientes_inativos", "Clientes Inativos"
+                elif "Auditoria de Frota" in tipo:
                     dados = crti_cli.buscar_dados_frota_completos(inicio, fim)
                     prompt = prompt_auditoria_frota(dados, label_periodo)
                     tipo_pdf, titulo = "auditoria_frota", "Auditoria de Frota"
-                elif "Manutenção" in tipo_relatorio:
-                    os_lista = crti_cli.buscar_os_manutencao(data_abertura_de=inicio, data_abertura_ate=fim)
-                    prompt = prompt_relatorio_manutencao(os_lista, label_periodo)
+                elif "Manutenção" in tipo:
+                    os_l = _os(inicio, fim)
+                    prompt = prompt_relatorio_manutencao(os_l, label_periodo)
                     tipo_pdf, titulo = "manutencao", "Relatório de Manutenção"
-                elif "Patrimônio" in tipo_relatorio:
-                    equip = crti_cli.buscar_equipamentos()
+                elif "Patrimônio" in tipo:
+                    equip = _equipamentos()
                     prompt = prompt_relatorio_patrimonio_frota(equip)
-                    tipo_pdf, titulo = "patrimonio_frota", "Inventário Patrimonial da Frota"
-                elif "Auditoria Financeira" in tipo_relatorio:
+                    tipo_pdf, titulo = "patrimonio", "Patrimônio da Frota"
+                elif "Auditoria Financeira" in tipo:
                     dados = crti_cli.buscar_dados_auditoria(inicio, fim)
                     prompt = prompt_auditoria_financeira(dados, label_periodo)
                     tipo_pdf, titulo = "auditoria", "Auditoria Financeira"
-                elif "Mensal" in tipo_relatorio:
+                elif "Mensal" in tipo:
                     dados = crti_cli.buscar_dados_financeiros(inicio, fim)
                     prompt = prompt_analise_financeira_mensal(dados, label_periodo)
                     tipo_pdf, titulo = "mensal", "Análise Financeira Mensal"
-                elif "Auditoria de Compras" in tipo_relatorio:
-                    dados = crti_cli.buscar_compras_periodo(inicio, fim)
+                elif "Auditoria de Compras" in tipo:
+                    dados = _compras(inicio, fim)
                     prompt = prompt_auditoria_compras(dados, label_periodo)
                     tipo_pdf, titulo = "auditoria_compras", "Auditoria de Compras"
-                elif "Gerencial de Compras" in tipo_relatorio:
-                    dados = crti_cli.buscar_compras_periodo(inicio, fim)
+                elif "Gerencial de Compras" in tipo:
+                    dados = _compras(inicio, fim)
                     prompt = prompt_relatorio_compras_gerencial(dados, label_periodo)
-                    tipo_pdf, titulo = "relatorio_compras", "Relatório Gerencial de Compras"
-                elif "Materiais" in tipo_relatorio:
-                    mats = crti_cli.buscar_materiais(apenas_ativos=False)
+                    tipo_pdf, titulo = "relatorio_compras", "Relatório de Compras"
+                elif "Materiais" in tipo:
+                    mats = _materiais()
                     prompt = prompt_auditoria_materiais(mats)
                     tipo_pdf, titulo = "materiais", "Auditoria de Materiais"
 
-                progresso.progress(40)
-                st.write("🤖 Claude está analisando os dados...")
+                prog.progress(50)
+                st.write("🤖 Claude analisando...")
+                analise = get_claude().analisar(prompt)
 
-                analise = claude.analisar(prompt)
-                progresso.progress(80)
-
+                prog.progress(80)
                 st.write("📄 Gerando PDF...")
-                caminho = pdf_gen.gerar_pdf(
-                    titulo=titulo,
-                    analise=analise,
-                    tipo=tipo_pdf,
-                    subtitulo=f"Período: {label_periodo}"
+                caminho = get_pdf().gerar_pdf(
+                    titulo=titulo, analise=analise,
+                    tipo=tipo_pdf, subtitulo=f"Período: {label_periodo}"
                 )
-                progresso.progress(100)
-                st.write("✅ Relatório gerado com sucesso!")
+                prog.progress(100)
+                st.write("✅ Pronto!")
 
-            # Resultado
-            st.success(f"✅ **{titulo}** gerado com sucesso!")
+            st.success(f"✅ **{titulo}** gerado!")
+            with open(caminho, "rb") as f:
+                st.download_button("⬇️ Baixar PDF", data=f.read(),
+                                   file_name=os.path.basename(caminho),
+                                   mime="application/pdf", use_container_width=True)
 
-            col_down, col_prev = st.columns([1, 2])
-
-            with col_down:
-                with open(caminho, "rb") as f:
-                    st.download_button(
-                        label="⬇️ Baixar PDF",
-                        data=f.read(),
-                        file_name=os.path.basename(caminho),
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
-
-            with col_prev:
-                st.subheader("📋 Prévia da Análise")
-                st.markdown(analise[:3000] + ("..." if len(analise) > 3000 else ""))
+            st.subheader("📋 Prévia")
+            st.markdown(analise[:3000] + ("..." if len(analise)>3000 else ""))
 
         except Exception as e:
-            st.error(f"❌ Erro ao gerar relatório: {e}")
+            st.error(f"❌ Erro: {e}")
             st.exception(e)
