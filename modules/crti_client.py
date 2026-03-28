@@ -44,12 +44,16 @@ class CRTIClient:
         self.session.headers.update({"Content-Type": "application/json"})
 
         # Detecta modo de autenticação automaticamente
+        self.xapi_key      = CRTI_CONFIG.get("xapi_key")
         self.client_id     = CRTI_CONFIG.get("client_id")
         self.client_secret = CRTI_CONFIG.get("client_secret")
         self.username      = CRTI_CONFIG.get("username")
         self.password      = CRTI_CONFIG.get("password")
 
-        if self.client_id and self.client_secret:
+        # Prioridade: X-Api-Key → OAuth 2.0 → Usuário/Senha
+        if self.xapi_key:
+            self._autenticar_xapikey_direto()
+        elif self.client_id and self.client_secret:
             self._autenticar_oauth2()
         else:
             self._autenticar()
@@ -120,6 +124,32 @@ class CRTIClient:
         logger.warning("⚠️  Endpoints OAuth não encontrados — tentando X-Api-Key direta...")
         self._autenticar_xapikey()
 
+    def _autenticar_xapikey_direto(self):
+        """
+        Autenticação direta via CRTI_XAPI_KEY — método mais simples e confiável.
+        Usa a chave única gerada em Credenciais B2B > Chave Única no CRTI.
+        """
+        logger.info("🔑 Autenticando via X-Api-Key direta...")
+        self.session.headers.update({
+            "X-Api-Key": self.xapi_key,
+        })
+        try:
+            resp = self.session.get(f"{self.base_url}/api/v1/auth/info", timeout=self.timeout)
+            if resp.status_code == 200:
+                logger.info("✅ Autenticado via X-Api-Key com sucesso!")
+                return
+            logger.warning(f"⚠️ X-Api-Key retornou {resp.status_code} — tentando com Client-Id no header...")
+            # Tenta também com Client-Id
+            if self.client_id:
+                self.session.headers.update({"X-Client-Id": self.client_id})
+                resp2 = self.session.get(f"{self.base_url}/api/v1/auth/info", timeout=self.timeout)
+                if resp2.status_code == 200:
+                    logger.info("✅ Autenticado via X-Api-Key + Client-Id!")
+                    return
+        except Exception as e:
+            logger.error(f"❌ Erro na autenticação X-Api-Key: {e}")
+        raise Exception("❌ X-Api-Key inválida ou sem permissão. Verifique CRTI_XAPI_KEY nos Secrets.")
+
     def _autenticar_xapikey(self):
         """
         Tenta autenticação via X-Api-Key (chave única).
@@ -130,7 +160,6 @@ class CRTIClient:
             "X-Api-Key": self.client_secret,
             "X-Client-Id": self.client_id,
         })
-        # Testa se funciona
         try:
             resp = self.session.get(f"{self.base_url}/api/v1/auth/info", timeout=self.timeout)
             if resp.status_code == 200:
