@@ -126,29 +126,30 @@ class CRTIClient:
 
     def _autenticar_xapikey_direto(self):
         """
-        Autenticação direta via CRTI_XAPI_KEY — método mais simples e confiável.
-        Usa a chave única gerada em Credenciais B2B > Chave Única no CRTI.
+        Autenticação direta via CRTI_XAPI_KEY.
+        Se falhar, tenta usuário/senha como fallback.
         """
         logger.info("🔑 Autenticando via X-Api-Key direta...")
-        self.session.headers.update({
-            "X-Api-Key": self.xapi_key,
-        })
+        self.session.headers.update({"X-Api-Key": self.xapi_key})
+        if self.client_id:
+            self.session.headers.update({"X-Client-Id": self.client_id})
         try:
             resp = self.session.get(f"{self.base_url}/api/v1/auth/info", timeout=self.timeout)
             if resp.status_code == 200:
                 logger.info("✅ Autenticado via X-Api-Key com sucesso!")
                 return
-            logger.warning(f"⚠️ X-Api-Key retornou {resp.status_code} — tentando com Client-Id no header...")
-            # Tenta também com Client-Id
-            if self.client_id:
-                self.session.headers.update({"X-Client-Id": self.client_id})
-                resp2 = self.session.get(f"{self.base_url}/api/v1/auth/info", timeout=self.timeout)
-                if resp2.status_code == 200:
-                    logger.info("✅ Autenticado via X-Api-Key + Client-Id!")
-                    return
+            logger.warning(f"⚠️ X-Api-Key retornou {resp.status_code} — tentando usuário/senha...")
         except Exception as e:
-            logger.error(f"❌ Erro na autenticação X-Api-Key: {e}")
-        raise Exception("❌ X-Api-Key inválida ou sem permissão. Verifique CRTI_XAPI_KEY nos Secrets.")
+            logger.warning(f"⚠️ Erro X-Api-Key: {e} — tentando usuário/senha...")
+
+        # Fallback: usuário/senha (JWT completo — acessa todos os módulos)
+        if self.username and self.password:
+            # Remove headers da X-Api-Key para usar JWT
+            self.session.headers.pop("X-Api-Key", None)
+            self.session.headers.pop("X-Client-Id", None)
+            self._autenticar()
+        else:
+            raise Exception("❌ Nenhum método de autenticação funcionou. Verifique os Secrets.")
 
     def _autenticar_xapikey(self):
         """
