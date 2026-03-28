@@ -34,7 +34,7 @@ st.set_page_config(
     page_title="CRTI Intelligence | Vogelsanger",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"  # fechado por padrão no celular
 )
 
 # ─────────────────────────────────────────────
@@ -42,81 +42,90 @@ st.set_page_config(
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
+    /* ── MOBILE FIRST ── */
+    @media (max-width: 768px) {
+        .main-header { padding: 1rem !important; }
+        .main-header h1 { font-size: 1.2rem !important; }
+        .main-header p  { font-size: 0.8rem !important; }
+        .kpi-value { font-size: 1.3rem !important; }
+        .kpi-label { font-size: 0.7rem !important; }
+        .block-container { padding: 0.5rem !important; }
+        .kpi-card { padding: 0.6rem 0.4rem !important; }
+    }
+
     /* Cabeçalho principal */
     .main-header {
         background: linear-gradient(135deg, #1A3C6E 0%, #2C5F9E 100%);
-        padding: 1.5rem 2rem;
+        padding: 1.2rem 1.5rem;
         border-radius: 12px;
         color: white;
-        margin-bottom: 1.5rem;
+        margin-bottom: 1rem;
     }
-    .main-header h1 { color: white; margin: 0; font-size: 1.8rem; }
-    .main-header p  { color: #BDD0F0; margin: 0.3rem 0 0; font-size: 0.95rem; }
+    .main-header h1 { color: white; margin: 0; font-size: 1.6rem; }
+    .main-header p  { color: #BDD0F0; margin: 0.2rem 0 0; font-size: 0.85rem; }
 
-    /* Cards de KPI */
+    /* Cards de KPI — compactos no mobile */
     .kpi-card {
         background: white;
         border: 1px solid #E0E8F5;
         border-radius: 10px;
-        padding: 1rem 1.2rem;
+        padding: 0.8rem 0.6rem;
         text-align: center;
         box-shadow: 0 2px 8px rgba(26,60,110,0.07);
+        height: 100%;
     }
-    .kpi-value { font-size: 2rem; font-weight: 700; color: #1A3C6E; }
-    .kpi-label { font-size: 0.8rem; color: #888; margin-top: 0.2rem; }
-    .kpi-delta { font-size: 0.85rem; margin-top: 0.3rem; }
+    .kpi-value { font-size: 1.6rem; font-weight: 700; color: #1A3C6E; line-height: 1.2; }
+    .kpi-label { font-size: 0.75rem; color: #888; margin-top: 0.2rem; line-height: 1.3; }
+    .kpi-delta { font-size: 0.75rem; margin-top: 0.2rem; }
     .kpi-delta.up   { color: #0A6E3F; }
     .kpi-delta.down { color: #C0392B; }
     .kpi-delta.warn { color: #F39C12; }
 
-    /* Caixa de alerta */
+    /* Alertas */
     .alert-box {
         background: #FDECEA;
         border-left: 4px solid #C0392B;
-        padding: 0.8rem 1rem;
+        padding: 0.7rem 0.8rem;
         border-radius: 0 8px 8px 0;
-        margin: 0.5rem 0;
+        margin: 0.4rem 0;
+        font-size: 0.9rem;
     }
-    .alert-box.warn {
-        background: #FFF3CD;
-        border-left-color: #F39C12;
-    }
-    .alert-box.ok {
-        background: #E8F5EE;
-        border-left-color: #0A6E3F;
-    }
+    .alert-box.warn { background: #FFF3CD; border-left-color: #F39C12; }
+    .alert-box.ok   { background: #E8F5EE; border-left-color: #0A6E3F; }
 
-    /* Sidebar */
-    .sidebar-section {
-        background: #F5F8FF;
-        border-radius: 8px;
-        padding: 0.8rem;
-        margin-bottom: 1rem;
-    }
-
-    /* Botão de relatório */
+    /* Botões */
     .stButton > button {
         background: #1A3C6E;
         color: white;
         border: none;
         border-radius: 8px;
-        padding: 0.6rem 1.5rem;
+        padding: 0.6rem 1rem;
         font-weight: 600;
         width: 100%;
-        transition: background 0.2s;
+        font-size: 0.9rem;
     }
-    .stButton > button:hover {
-        background: #2C5F9E;
-    }
+    .stButton > button:hover { background: #2C5F9E; }
 
-    /* Status badge */
-    .status-ok   { background:#E8F5EE; color:#0A6E3F; padding:2px 10px; border-radius:12px; font-size:0.8rem; font-weight:600; }
-    .status-warn { background:#FFF3CD; color:#F39C12; padding:2px 10px; border-radius:12px; font-size:0.8rem; font-weight:600; }
-    .status-err  { background:#FDECEA; color:#C0392B; padding:2px 10px; border-radius:12px; font-size:0.8rem; font-weight:600; }
+    /* Status */
+    .status-ok   { background:#E8F5EE; color:#0A6E3F; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600; }
+    .status-warn { background:#FFF3CD; color:#F39C12; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600; }
+    .status-err  { background:#FDECEA; color:#C0392B; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600; }
 
-    /* Esconde o menu padrão do streamlit */
+    /* Tabelas — scroll horizontal no mobile */
+    .stDataFrame { overflow-x: auto !important; }
+
+    /* Reduz padding geral no mobile */
+    .block-container { padding-top: 1rem; padding-bottom: 1rem; }
+
+    /* Gráficos responsivos */
+    .js-plotly-plot { width: 100% !important; }
+
+    /* Esconde menu e rodapé padrão */
     #MainMenu { visibility: hidden; }
     footer    { visibility: hidden; }
+
+    /* Sidebar mais compacta */
+    [data-testid="stSidebar"] { min-width: 240px !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -293,8 +302,8 @@ if pagina == "🏠 Painel Geral":
 
             hoje = datetime.now().date().isoformat()
 
-            # ── KPIs ──
-            col1, col2, col3, col4, col5 = st.columns(5)
+            # ── KPIs — 5 colunas desktop, 2+3 no mobile ──
+            col1, col2, col3, col4, col5 = st.columns([1,1,1,1,1])
             with col1:
                 st.markdown(kpi("Equipamentos", res_equip["total_equipamentos"]), unsafe_allow_html=True)
             with col2:
