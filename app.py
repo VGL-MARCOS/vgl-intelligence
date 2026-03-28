@@ -197,9 +197,15 @@ def buscar_pedidos(inicio, fim, situacao=None, filiais_ids=None):
 
 
 
-@st.cache_data(ttl=600, show_spinner=False)  # 10 min
+@st.cache_data(ttl=600, show_spinner=False)
 def buscar_orcamentos(inicio, fim):
-    return get_crti().buscar_orcamentos_venda(data_inicio=inicio, data_fim=fim)
+    try:
+        return get_crti().buscar_orcamentos_venda(data_inicio=inicio, data_fim=fim)
+    except Exception as e:
+        # CRTI pode retornar 500 neste endpoint — retorna lista vazia
+        import logging
+        logging.getLogger("app").warning(f"Orçamentos indisponível: {e}")
+        return []
 
 @st.cache_data(ttl=7200, show_spinner=False)  # 2 horas — análise pesada
 def buscar_clientes_inativos_cache(dias=60):
@@ -326,29 +332,21 @@ with st.sidebar:
     try:
         filiais_dict = buscar_filiais()
         if filiais_dict:
-            opcoes_filiais = {"Todas as filiais": None}
-            opcoes_filiais.update({v: k for k, v in filiais_dict.items()})
-            
             filiais_selecionadas = st.multiselect(
                 "Filiais",
-                options=list(filiais_dict.values()),
+                options=sorted(filiais_dict.values()),
                 default=None,
                 placeholder="Todas as filiais",
                 label_visibility="collapsed"
             )
-            # IDs selecionados
-            filiais_ids = [filiais_dict[n] for n in filiais_selecionadas
-                           if n in {v: k for k,v in filiais_dict.items()}]
-            filiais_ids = [k for k,v in filiais_dict.items() if v in filiais_selecionadas]
-            
-            if filiais_selecionadas:
-                st.caption(f"🏭 {len(filiais_selecionadas)} filial(is) selecionada(s)")
+            filiais_ids = [k for k,v in filiais_dict.items()
+                           if v in filiais_selecionadas] or None
+            if filiais_ids:
+                st.caption(f"🏭 {len(filiais_ids)} filial(is)")
             else:
                 st.caption("🏭 Todas as filiais")
-                filiais_ids = None
         else:
             filiais_ids = None
-            st.caption("Carregando filiais...")
     except Exception:
         filiais_ids = None
 
@@ -739,7 +737,11 @@ elif pagina == "🛍️ Vendas":
     if carregar_vendas:
         with st.spinner("Buscando pedidos..."):
             st.session_state["vendas_pedidos"]    = buscar_pedidos(inicio, fim, filiais_ids=filiais_ids)
-            st.session_state["vendas_orcamentos"] = buscar_orcamentos(inicio, fim)
+            try:
+                st.session_state["vendas_orcamentos"] = buscar_orcamentos(inicio, fim)
+            except Exception:
+                st.session_state["vendas_orcamentos"] = []
+                st.warning("⚠️ Orçamentos indisponíveis no momento — exibindo apenas pedidos.")
             st.session_state["vendas_periodo"]    = label_periodo
 
     with st.spinner("Processando..."):
@@ -753,6 +755,8 @@ elif pagina == "🛍️ Vendas":
             sit_orc     = Counter(o.get("situacao", "?") for o in orcamentos)
             orc_aprov   = sit_orc.get("APROVADO", 0) + sit_orc.get("CONCLUIDO", 0)
             taxa_conv   = (orc_aprov / len(orcamentos) * 100) if orcamentos else 0
+            if not orcamentos:
+                st.info("ℹ️ Orçamentos temporariamente indisponíveis na API do CRTI.")
 
             # KPIs
             c1, c2, c3, c4, c5 = st.columns(5)
