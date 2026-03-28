@@ -103,7 +103,7 @@ def _transferencias(inicio, fim):
 def _compras(inicio, fim):
     return get_crti().buscar_compras_periodo(inicio, fim)
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)  # 5 min - dados limitados a 200
 def _pedidos(inicio, fim):
     return get_crti().buscar_pedidos_material(data_inicio=inicio, data_fim=fim)
 
@@ -116,7 +116,7 @@ def _orcamentos(inicio, fim):
 def _materiais():
     return get_crti().buscar_materiais(apenas_ativos=False)
 
-@st.cache_data(ttl=7200, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)  # 1 hora - busca pesada
 def _clientes_inativos(dias):
     return get_crti().buscar_clientes_inativos(dias_sem_comprar=dias)
 
@@ -299,16 +299,26 @@ if pagina == "🏠 Painel Geral":
 elif pagina == "🛍️ Vendas":
     st.markdown(f"""<div class="main-header">
         <h1>🛍️ Vendas</h1>
-        <p>Pedidos e orçamentos · {label_periodo}</p></div>""", unsafe_allow_html=True)
+        <p>Pedidos e orçamentos · {label_periodo} · máx 200 registros</p></div>""", unsafe_allow_html=True)
 
-    if st.button("🔄 Carregar dados de Vendas"):
-        st.session_state["v_pedidos"] = _pedidos(inicio, fim)
-        st.session_state["v_orc"]     = _orcamentos(inicio, fim)
-        st.session_state["v_periodo"] = label_periodo
+    c_btn, c_info = st.columns([1,3])
+    with c_btn:
+        carregar = st.button("🔄 Carregar Vendas", use_container_width=True)
+    with c_info:
+        st.caption("⚡ Carrega até 200 pedidos mais recentes do período.")
 
-    if "v_pedidos" not in st.session_state:
-        st.info("👆 Clique em **Carregar dados de Vendas** para buscar.")
+    if carregar or "v_pedidos" in st.session_state:
+        if carregar:
+            with st.spinner("Buscando pedidos..."):
+                st.session_state["v_pedidos"] = _pedidos(inicio, fim)
+            with st.spinner("Buscando orçamentos..."):
+                st.session_state["v_orc"] = _orcamentos(inicio, fim)
+            st.session_state["v_periodo"] = label_periodo
     else:
+        st.info("👆 Clique em **Carregar Vendas** para buscar os dados.")
+        st.stop()
+
+    if "v_pedidos" in st.session_state:
         try:
             pedidos    = st.session_state["v_pedidos"]
             orcamentos = st.session_state["v_orc"]
@@ -399,11 +409,18 @@ elif pagina == "👥 Clientes Inativos":
     with c1:
         analisar = st.button("🔍 Analisar Carteira", use_container_width=True)
     with c2:
-        st.caption("⏱️ Analisa 365 dias de histórico — pode levar 30-60 segundos.")
+        st.caption("⚡ Busca até 500 pedidos do histórico para identificar inativos.")
+
+    # Invalida cache se mudou o critério de dias
+    if st.session_state.get("inat_dias") != dias:
+        st.session_state.pop("inat_dados", None)
+        st.session_state["inat_dias"] = dias
 
     if analisar:
-        with st.spinner("Analisando histórico de clientes..."):
-            st.session_state["inat_dados"] = _clientes_inativos(dias)
+        ph = st.empty()
+        ph.info("⏳ Buscando histórico de pedidos... aguarde.")
+        st.session_state["inat_dados"] = _clientes_inativos(dias)
+        ph.empty()
 
     if "inat_dados" not in st.session_state:
         st.info("👆 Clique em **Analisar Carteira** para identificar clientes inativos.")

@@ -901,7 +901,14 @@ class CRTIClient:
         if ids_vendedores:
             params["filtro.idsVendedores"] = ids_vendedores
 
-        return self._get_paginado("/api/v1/vendas_producao/pedido_material", params)
+        # Busca primeira página para ter estatísticas rápidas
+        params["limit"] = 200  # limita para não sobrecarregar
+        params["page"]  = 0
+        dados = self._get("/api/v1/vendas_producao/pedido_material", params)
+        items = dados.get("data", [])
+        total = dados.get("totalLength", len(items))
+        logger.info(f"   Pedidos: {len(items)}/{total} (primeiros 200)")
+        return items
 
     # ──────────────────────────────────────────
     #  ORÇAMENTOS DE VENDAS
@@ -990,11 +997,19 @@ class CRTIClient:
                     f"(sem comprar há {dias_sem_comprar} dias)...")
 
         # Busca pedidos do histórico completo
-        todos_pedidos = self.buscar_pedidos_material(
-            data_inicio=historico.strftime("%Y-%m-%d"),
-            data_fim=hoje.strftime("%Y-%m-%d"),
-            situacao="CONCLUIDO",
-        )
+        # Busca com limite maior para ter histórico representativo
+        logger.info(f"   Período: {historico} → {hoje}")
+        params_hist = {
+            "filtro.dataInicialPedido": historico.strftime("%Y-%m-%d"),
+            "filtro.dataFinalPedido":   hoje.strftime("%Y-%m-%d"),
+            "filtro.situacaoPedido":    "CONCLUIDO",
+            "limit": 500,
+            "page":  0,
+        }
+        dados_hist = self._get("/api/v1/vendas_producao/pedido_material", params_hist)
+        todos_pedidos = dados_hist.get("data", [])
+        total_hist = dados_hist.get("totalLength", len(todos_pedidos))
+        logger.info(f"   Histórico: {len(todos_pedidos)}/{total_hist} pedidos carregados")
 
         # Agrupa por cliente
         clientes = {}
