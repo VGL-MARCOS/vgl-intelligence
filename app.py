@@ -149,20 +149,20 @@ def get_pdf():
 # ─────────────────────────────────────────────
 #  CACHE DE DADOS (evita rebuscar a cada clique)
 # ─────────────────────────────────────────────
-@st.cache_data(ttl=3600, show_spinner=False)  # 1 hora — filiais mudam raramente
+@st.cache_data(ttl=3600, show_spinner=False)
 def buscar_filiais():
-    """Busca lista de filiais via contas correntes (campo filial)."""
+    """Busca filiais via equipamentos (campo nomeFilialAtual)."""
     try:
-        contas = get_crti().buscar_contas_correntes(apenas_ativas=True)
+        # Usa equipamentos que já temos — extrai filiais únicas
+        equip = get_crti().buscar_equipamentos()
         filiais = {}
-        for c in contas:
-            f = c.get("filial") or {}
-            fid = f.get("id")
-            fnome = f.get("nome", "")
-            if fid and fnome:
+        for e in equip:
+            fid   = e.get("idFilialAtual")
+            fnome = e.get("nomeFilialAtual", "")
+            if fid and fnome and fnome not in filiais.values():
                 filiais[fid] = fnome
-        return filiais  # {id: nome}
-    except:
+        return dict(sorted(filiais.items(), key=lambda x: x[1]))
+    except Exception:
         return {}
 
 @st.cache_data(ttl=1800, show_spinner=False)  # 30 min — cadastro muda pouco
@@ -329,6 +329,7 @@ with st.sidebar:
 
     # Seletor de filiais
     st.markdown("**🏭 Filial**")
+    filiais_ids = None
     try:
         filiais_dict = buscar_filiais()
         if filiais_dict:
@@ -339,15 +340,16 @@ with st.sidebar:
                 placeholder="Todas as filiais",
                 label_visibility="collapsed"
             )
-            filiais_ids = [k for k,v in filiais_dict.items()
-                           if v in filiais_selecionadas] or None
-            if filiais_ids:
-                st.caption(f"🏭 {len(filiais_ids)} filial(is)")
+            if filiais_selecionadas:
+                filiais_ids = [k for k,v in filiais_dict.items()
+                               if v in filiais_selecionadas] or None
+                st.caption(f"🏭 {len(filiais_selecionadas)} filial(is)")
             else:
                 st.caption("🏭 Todas as filiais")
         else:
-            filiais_ids = None
+            st.caption("🏭 Todas as filiais")
     except Exception:
+        st.caption("🏭 Todas as filiais")
         filiais_ids = None
 
     st.divider()
@@ -355,11 +357,11 @@ with st.sidebar:
     # Status da conexão
     st.markdown("**🔌 Status**")
     try:
-        info = buscar_info_empresa()
+        info    = buscar_info_empresa()
         empresa = info.get("nomeEmpresa", "Conectado")
-        st.markdown(f'<span class="status-ok">✓ {empresa[:25]}</span>', unsafe_allow_html=True)
-    except Exception as e:
-        st.markdown('<span class="status-err">✗ Sem conexão com CRTI</span>', unsafe_allow_html=True)
+        st.markdown(f'<span class="status-ok">✓ {empresa[:20]}</span>', unsafe_allow_html=True)
+    except Exception:
+        st.markdown('<span class="status-warn">⚠ Verificando...</span>', unsafe_allow_html=True)
 
     st.caption(f"Atualizado: {datetime.now().strftime('%H:%M:%S')}")
     if st.button("🔄 Atualizar dados", use_container_width=True):
