@@ -635,3 +635,178 @@ Seguros vencidos:      {res['seguros_vencidos']}
 ### 5. NUMERAÇÃO PATRIMONIAL
 ### 6. RECOMENDAÇÕES PARA CONTROLADORIA
 """
+
+
+# ═══════════════════════════════════════════════════════
+#  PROMPTS — MÓDULO VENDAS
+# ═══════════════════════════════════════════════════════
+
+def prompt_clientes_inativos(dados: dict) -> str:
+    """Análise de clientes inativos com estratégia de reativação."""
+    resumo   = dados.get("resumo", {})
+    inativos = dados.get("inativos", [])
+    ativos   = dados.get("ativos_recentes", [])
+
+    valor_inativos = sum(c.get("total_historico", 0) for c in inativos)
+    valor_ativos   = sum(c.get("total_historico", 0) for c in ativos)
+
+    return f"""
+Você é um gerente comercial sênior da BRITAGEM VOGELSANGER LTDA analisando a carteira de clientes.
+
+═══ RESUMO DA CARTEIRA ═══
+Total de clientes com histórico: {resumo.get('total_clientes', 0)}
+Clientes INATIVOS (sem comprar há +{resumo.get('dias_corte', 60)} dias): {resumo.get('inativos', 0)} ({resumo.get('pct_inativo', 0)}%)
+Clientes ativos recentes: {resumo.get('ativos', 0)}
+Período analisado: últimos {resumo.get('periodo_analise', 365)} dias
+
+Valor histórico dos inativos: R$ {valor_inativos:,.2f}
+Valor histórico dos ativos:   R$ {valor_ativos:,.2f}
+
+═══ CLIENTES INATIVOS (ordenados por tempo sem comprar) ═══
+{_s(inativos[:50], 999)}
+
+═══ TOP 20 CLIENTES ATIVOS ═══
+{_s(ativos[:20], 999)}
+
+Elabore um relatório completo de análise de carteira:
+
+### 1. VISÃO GERAL DA CARTEIRA
+- Distribuição ativo/inativo com % e valores
+- Receita em risco (valor histórico dos inativos)
+- Tempo médio de inatividade
+
+### 2. CLIENTES INATIVOS — PRIORIDADE DE REATIVAÇÃO
+Classifique em 3 grupos por prioridade:
+- 🔴 **URGENTE** (inativos há 60-120 dias, alto valor histórico)
+- 🟡 **ATENÇÃO** (inativos há 120-180 dias)
+- ⚫ **PERDIDOS** (inativos há +180 dias)
+
+Para cada grupo liste: Cliente | Último pedido | Dias sem comprar | Valor histórico | Ticket médio
+
+### 3. ANÁLISE DE PADRÃO
+- Clientes que compravam regularmente e pararam (frequência alta → zero)
+- Clientes sazonais (padrão esperado vs inesperado)
+- Mês/período em que ocorreram mais inativos
+
+### 4. ESTRATÉGIA DE REATIVAÇÃO
+Para cada grupo de prioridade, sugira ação específica:
+- Script de abordagem comercial
+- Tipo de oferta/condição especial
+- Canal de contato recomendado (visita, ligação, email)
+
+### 5. TOP 10 CLIENTES ATIVOS — PROTEÇÃO
+- Clientes mais valiosos que precisam de atenção especial
+- Frequência de compra e tendência
+
+### 6. RESUMO EXECUTIVO
+- Receita recuperável estimada (% dos inativos que podem voltar)
+- Meta de reativação recomendada para o mês
+- KPI sugerido: taxa de reativação mensal
+
+Use R$ e % em todos os valores. Tom direto para a equipe comercial.
+"""
+
+
+def prompt_analise_vendas(pedidos: list, orcamentos: list, periodo: str) -> str:
+    """Análise completa de vendas: pedidos, orçamentos, conversão."""
+    from collections import Counter
+
+    total_pedidos   = len(pedidos)
+    total_orc       = len(orcamentos)
+    valor_pedidos   = sum(p.get("valorTotalPedido", 0) or 0 for p in pedidos)
+
+    # Por situação
+    sit_pedidos = Counter(p.get("situacaoPedido", "?") for p in pedidos)
+    sit_orc     = Counter(o.get("situacao", "?") for o in orcamentos)
+
+    # Por cliente
+    clientes_pedido = Counter()
+    for p in pedidos:
+        cli = (p.get("cliente") or {}).get("nomeRazao", "?")
+        clientes_pedido[cli] += p.get("valorTotalPedido", 0) or 0
+
+    # Por vendedor
+    vendedores = Counter()
+    for p in pedidos:
+        v = (p.get("vendedorPedido") or {}).get("nomeVendedor", "Sem vendedor")
+        vendedores[v] += p.get("valorTotalPedido", 0) or 0
+
+    # Materiais mais vendidos
+    materiais = Counter()
+    for p in pedidos:
+        for m in (p.get("materiaisPedido") or []):
+            nome = (m.get("material") or {}).get("descricao", "?")
+            materiais[nome] += m.get("quantidade", 0) or 0
+
+    # Taxa de conversão
+    orc_aprovados = sit_orc.get("APROVADO", 0) + sit_orc.get("CONCLUIDO", 0)
+    taxa_conv = (orc_aprovados / total_orc * 100) if total_orc else 0
+
+    return f"""
+Você é o diretor comercial da BRITAGEM VOGELSANGER LTDA apresentando resultados para a diretoria.
+
+Período: {periodo}
+
+═══ RESUMO DE VENDAS ═══
+Pedidos no período:     {total_pedidos}
+Valor total:            R$ {valor_pedidos:,.2f}
+Ticket médio:           R$ {(valor_pedidos/total_pedidos):,.2f if total_pedidos else 0}
+Orçamentos emitidos:    {total_orc}
+Taxa de conversão ORC→PED: {taxa_conv:.1f}%
+
+Por situação (pedidos): {dict(sit_pedidos)}
+Por situação (orçamentos): {dict(sit_orc)}
+
+═══ TOP 15 CLIENTES POR VALOR ═══
+{_s(clientes_pedido.most_common(15), 999)}
+
+═══ RANKING DE VENDEDORES ═══
+{_s(vendedores.most_common(10), 999)}
+
+═══ TOP 10 MATERIAIS MAIS VENDIDOS (quantidade) ═══
+{_s(materiais.most_common(10), 999)}
+
+═══ AMOSTRA DE PEDIDOS ═══
+{_s(pedidos[:30], 999)}
+
+═══ AMOSTRA DE ORÇAMENTOS ═══
+{_s(orcamentos[:20], 999)}
+
+Elabore relatório gerencial completo de vendas:
+
+### 1. RESULTADO DO PERÍODO
+- Volume total e comparativo
+- Distribuição por situação (concluído, aprovado, pendente, cancelado)
+- Ticket médio e tendência
+
+### 2. ANÁLISE DE CLIENTES
+- Top 15 clientes por valor
+- Concentração: top 3 representam X% do total
+- Clientes novos vs recorrentes (se identificável pela data)
+
+### 3. PERFORMANCE DE VENDEDORES
+- Ranking por valor vendido
+- Participação % de cada vendedor no total
+
+### 4. PRODUTOS MAIS VENDIDOS
+- Top materiais por quantidade e valor
+- Mix de produtos por cliente
+
+### 5. PIPELINE DE ORÇAMENTOS
+- Orçamentos em aberto (aguardando aprovação)
+- Taxa de conversão: orçamento → pedido aprovado
+- Valor potencial em orçamentos pendentes (saldo)
+- Orçamentos reprovados: principais motivos
+
+### 6. ALERTAS COMERCIAIS
+- Pedidos aguardando aprovação há muito tempo
+- Orçamentos próximos do vencimento da validade
+- Clientes sem pedido no período (possíveis inativos)
+
+### 7. RESUMO EXECUTIVO
+- Top 3 conquistas do período
+- Top 3 oportunidades identificadas
+- Recomendações para o próximo período
+
+Tom executivo para apresentação à diretoria. Use R$ e % em todos os valores.
+"""

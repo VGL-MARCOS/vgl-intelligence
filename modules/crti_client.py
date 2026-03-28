@@ -852,3 +852,219 @@ class CRTIClient:
                                    data_de=data_inicio, data_ate=data_fim
                                ),
         }
+
+
+    # ══════════════════════════════════════════
+    #  MÓDULO: VENDAS E PRODUÇÃO
+    #  /api/v1/vendas_producao/*
+    # ══════════════════════════════════════════
+
+    # ──────────────────────────────────────────
+    #  PEDIDOS DE MATERIAL (VENDAS)
+    # ──────────────────────────────────────────
+    def buscar_pedidos_material(
+        self,
+        data_inicio: str = None,
+        data_fim: str = None,
+        id_cliente: int = None,
+        situacao: str = None,
+        ids_filiais: list = None,
+        ids_vendedores: list = None,
+    ) -> list:
+        """
+        GET /api/v1/vendas_producao/pedido_material
+
+        Filtro via objeto FiltroPedidoMaterial (passado como query params).
+
+        Campos retornados:
+          id, cliente{id,nomeRazao,cnpj}, dataPedido, situacaoPedido,
+          valorTotalPedido, tipoPedidoVenda, tipoFrete,
+          vendedorPedido, filialMovimento,
+          materiaisPedido[{material, quantidade, valorUnitarioCif,
+                            valorUnitarioFob, custoTransporte}],
+          dataLancamento, dataAprovacao, observacao
+
+        Situações: AGUARDANDO_APROVACAO, APROVADO, CONCLUIDO, CANCELADO
+        """
+        logger.info(f"🛍️ Buscando pedidos de material: {data_inicio} → {data_fim}")
+        params = {}
+        if data_inicio:
+            params["filtro.dataInicialPedido"] = data_inicio
+        if data_fim:
+            params["filtro.dataFinalPedido"] = data_fim
+        if id_cliente:
+            params["filtro.idCliente"] = id_cliente
+        if situacao:
+            params["filtro.situacaoPedido"] = situacao
+        if ids_filiais:
+            params["filtro.idsFiliaisMovimento"] = ids_filiais
+        if ids_vendedores:
+            params["filtro.idsVendedores"] = ids_vendedores
+
+        return self._get_paginado("/api/v1/vendas_producao/pedido_material", params)
+
+    # ──────────────────────────────────────────
+    #  ORÇAMENTOS DE VENDAS
+    # ──────────────────────────────────────────
+    def buscar_orcamentos_venda(
+        self,
+        data_inicio: str = None,
+        data_fim: str = None,
+        id_cliente: int = None,
+        situacao: str = None,
+    ) -> list:
+        """
+        GET /api/v1/vendas_producao/orcamentos_venda
+
+        Campos retornados:
+          id, cliente, dataOrcamento, situacao, saldo,
+          representante (vendedor), filialMovimento,
+          materiaisOrcamento[{material, quantidade,
+                               valorUnitarioCif, valorUnitarioFob}],
+          dataAprovacao, dataReprovacao, tabelaPreco
+
+        Situações: AGUARDANDO_APROVACAO, APROVADO, CONCLUIDO,
+                   CANCELADO, REPROVADO
+        """
+        logger.info(f"📋 Buscando orçamentos: {data_inicio} → {data_fim}")
+        params = {}
+        if data_inicio:
+            params["dataInicio"] = data_inicio
+        if data_fim:
+            params["dataFim"] = data_fim
+        if id_cliente:
+            params["idCliente"] = id_cliente
+        if situacao:
+            params["situacao"] = situacao
+        return self._get_paginado("/api/v1/vendas_producao/orcamentos_venda", params)
+
+    # ──────────────────────────────────────────
+    #  TABELA DE PREÇOS
+    # ──────────────────────────────────────────
+    def buscar_precos_venda(self, apenas_ativos: bool = True) -> list:
+        """
+        GET /api/v1/vendas_producao/precos_venda
+
+        Campos:
+          id, nomeTabela, dataTabela, tipoTabela (PESO/VOLUME/UNIDADES),
+          tipoPedidoVenda, ativo, filiais[],
+          itensPrecoVenda[{material, tipoFrete,
+                            precoMaterialFob, precoFreteKm,
+                            criterioCalculoCusto}]
+        """
+        logger.info("💰 Buscando tabelas de preços...")
+        params = {}
+        if apenas_ativos:
+            params["ativo"] = True
+        return self._get_paginado("/api/v1/vendas_producao/precos_venda", params)
+
+    # ──────────────────────────────────────────
+    #  ANÁLISE DE CLIENTES INATIVOS
+    #  Compara dois períodos para identificar
+    #  clientes que pararam de comprar
+    # ──────────────────────────────────────────
+    def buscar_clientes_inativos(
+        self,
+        dias_sem_comprar: int = 60,
+        periodo_historico_dias: int = 365,
+    ) -> dict:
+        """
+        Identifica clientes que compraram no histórico
+        mas não compraram nos últimos N dias.
+
+        Retorna:
+          {
+            "inativos": [{cliente, ultima_compra, dias_sem_comprar,
+                          total_historico, qtde_pedidos}],
+            "ativos_recentes": [{cliente, ultima_compra, total_periodo}],
+            "resumo": {total_clientes, inativos, ativos, pct_inativo}
+          }
+        """
+        from datetime import datetime, timedelta
+
+        hoje     = datetime.now().date()
+        corte    = hoje - timedelta(days=dias_sem_comprar)
+        historico= hoje - timedelta(days=periodo_historico_dias)
+
+        logger.info(f"🔍 Buscando clientes inativos "
+                    f"(sem comprar há {dias_sem_comprar} dias)...")
+
+        # Busca pedidos do histórico completo
+        todos_pedidos = self.buscar_pedidos_material(
+            data_inicio=historico.strftime("%Y-%m-%d"),
+            data_fim=hoje.strftime("%Y-%m-%d"),
+            situacao="CONCLUIDO",
+        )
+
+        # Agrupa por cliente
+        clientes = {}
+        for p in todos_pedidos:
+            cli = p.get("cliente") or {}
+            cli_id   = cli.get("id")
+            cli_nome = cli.get("nomeRazao") or cli.get("nomeFantasia", f"ID {cli_id}")
+            if not cli_id:
+                continue
+
+            data_str = p.get("dataPedido", "")
+            try:
+                data_pedido = datetime.strptime(data_str[:10], "%Y-%m-%d").date()
+            except:
+                continue
+
+            valor = p.get("valorTotalPedido", 0) or 0
+
+            if cli_id not in clientes:
+                clientes[cli_id] = {
+                    "id":             cli_id,
+                    "nome":           cli_nome,
+                    "cnpj":           cli.get("cnpj", ""),
+                    "ultima_compra":  data_pedido,
+                    "primeira_compra":data_pedido,
+                    "total_historico":0,
+                    "qtde_pedidos":   0,
+                }
+            c = clientes[cli_id]
+            c["total_historico"] += valor
+            c["qtde_pedidos"]    += 1
+            if data_pedido > c["ultima_compra"]:
+                c["ultima_compra"] = data_pedido
+            if data_pedido < c["primeira_compra"]:
+                c["primeira_compra"] = data_pedido
+
+        # Classifica inativos vs ativos
+        inativos = []
+        ativos   = []
+        for c in clientes.values():
+            dias = (hoje - c["ultima_compra"]).days
+            c["dias_sem_comprar"]    = dias
+            c["ultima_compra"]       = c["ultima_compra"].isoformat()
+            c["primeira_compra"]     = c["primeira_compra"].isoformat()
+            c["total_historico"]     = round(c["total_historico"], 2)
+            c["ticket_medio"]        = round(
+                c["total_historico"] / c["qtde_pedidos"], 2
+            ) if c["qtde_pedidos"] else 0
+
+            if c["ultima_compra"] < corte.isoformat():
+                inativos.append(c)
+            else:
+                ativos.append(c)
+
+        inativos.sort(key=lambda x: x["dias_sem_comprar"], reverse=True)
+        ativos.sort(key=lambda x: x["total_historico"], reverse=True)
+
+        total = len(clientes)
+        logger.info(f"   {len(inativos)} clientes inativos / "
+                    f"{len(ativos)} ativos / {total} total")
+
+        return {
+            "inativos":        inativos,
+            "ativos_recentes": ativos,
+            "resumo": {
+                "total_clientes":  total,
+                "inativos":        len(inativos),
+                "ativos":          len(ativos),
+                "pct_inativo":     round(len(inativos)/total*100, 1) if total else 0,
+                "dias_corte":      dias_sem_comprar,
+                "periodo_analise": periodo_historico_dias,
+            }
+        }
