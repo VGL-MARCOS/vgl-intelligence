@@ -972,7 +972,7 @@ class CRTIClient:
     # ──────────────────────────────────────────
     def buscar_clientes_inativos(
         self,
-        dias_sem_comprar: int = 30,
+        dias_sem_comprar: int = 60,
         periodo_historico_dias: int = 365,
     ) -> dict:
         """
@@ -1002,6 +1002,7 @@ class CRTIClient:
         params_hist = {
             "filtro.dataInicialPedido": historico.strftime("%Y-%m-%d"),
             "filtro.dataFinalPedido":   hoje.strftime("%Y-%m-%d"),
+            "filtro.situacaoPedido":    "CONCLUIDO",
             "limit": 500,
             "page":  0,
         }
@@ -1009,6 +1010,8 @@ class CRTIClient:
         todos_pedidos = dados_hist.get("data", [])
         total_hist = dados_hist.get("totalLength", len(todos_pedidos))
         logger.info(f"   Histórico: {len(todos_pedidos)}/{total_hist} pedidos carregados")
+
+        logger.info(f"   Total pedidos carregados: {len(todos_pedidos)}")
 
         # Agrupa por cliente
         clientes = {}
