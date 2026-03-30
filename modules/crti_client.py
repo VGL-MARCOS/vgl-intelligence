@@ -901,20 +901,26 @@ class CRTIClient:
         if ids_vendedores:
             params["filtro.idsVendedores"] = ids_vendedores
 
-        # Busca primeira página para ter estatísticas rápidas
-        params["limit"] = 200
-        params["page"]  = 0
+        # Ordena por data decrescente para pegar os mais recentes
+        params["sortField"] = "dataPedido"
+        params["sortDir"]   = "desc"
+        params["limit"]     = 500  # busca mais para ter dados suficientes após filtro
+        params["page"]      = 0
+
         dados = self._get("/api/v1/vendas_producao/pedido_material", params)
         items = dados.get("data", [])
         total = dados.get("totalLength", len(items))
-        logger.info(f"   Pedidos: {len(items)}/{total} (primeiros 200)")
+        logger.info(f"   Pedidos brutos: {len(items)}/{total}")
 
-        # Filtra localmente por data — a API pode retornar registros antigos
+        # Filtro local por data — garante período correto independente da API
         if data_inicio:
             items = [p for p in items if (p.get("dataPedido") or "")[:10] >= data_inicio]
         if data_fim:
             items = [p for p in items if (p.get("dataPedido") or "")[:10] <= data_fim]
-        logger.info(f"   Após filtro local: {len(items)} pedidos no período")
+
+        # Limita a 200 após filtro
+        items = items[:200]
+        logger.info(f"   Pedidos no período: {len(items)}")
         return items
 
     # ──────────────────────────────────────────

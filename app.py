@@ -342,9 +342,12 @@ elif pagina == "🛍️ Vendas":
         st.caption("⚡ Carrega ate 200 pedidos do periodo selecionado.")
 
     if carregar:
+        # Limpa cache do Streamlit para forçar nova busca
+        _pedidos.clear()
+        _orcamentos.clear()
         with st.spinner("Buscando pedidos..."):
             st.session_state["v_pedidos"] = _pedidos(v_inicio, v_fim)
-        with st.spinner("Buscando orcamentos..."):
+        with st.spinner("Buscando orçamentos..."):
             st.session_state["v_orc"] = _orcamentos(v_inicio, v_fim)
         st.session_state["v_periodo"] = v_label
 
