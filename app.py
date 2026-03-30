@@ -403,7 +403,7 @@ elif pagina == "👥 Clientes Inativos":
         <h1>👥 Clientes Inativos</h1>
         <p>Clientes que pararam de comprar — estratégia de reativação</p></div>""", unsafe_allow_html=True)
 
-    dias = st.slider("Considerar inativo após X dias sem comprar", 30, 90, 30, 10)
+    dias = st.slider("Considerar inativo após X dias sem comprar", 30, 180, 60, 10)
 
     c1, c2 = st.columns([1,3])
     with c1:
@@ -428,16 +428,24 @@ elif pagina == "👥 Clientes Inativos":
         try:
             dados    = st.session_state["inat_dados"]
             resumo   = dados.get("resumo", {})
-            inativos = dados.get("inativos", [])
-            ativos   = dados.get("ativos_recentes", [])
+            inativos_todos = dados.get("inativos", [])
+            ativos         = dados.get("ativos_recentes", [])
+
+            # Filtra pelo range de dias selecionado
+            inativos = [
+                c for c in inativos_todos
+                if dias_min <= c.get("dias_sem_comprar", 0) <= dias_max
+            ]
+
+            valor_risco = sum(c.get("total_historico",0) for c in inativos)
+            pct = round(len(inativos)/resumo.get("total_clientes",1)*100, 1) if resumo.get("total_clientes") else 0
 
             c1,c2,c3,c4 = st.columns(4)
             with c1: st.markdown(kpi("Total Clientes", resumo.get("total_clientes",0)), unsafe_allow_html=True)
-            with c2: st.markdown(kpi("Inativos", resumo.get("inativos",0),
-                delta=f"⚠️ {resumo.get('pct_inativo',0)}% da carteira", delta_type="warn"), unsafe_allow_html=True)
-            with c3: st.markdown(kpi("Ativos", resumo.get("ativos",0),
+            with c2: st.markdown(kpi(f"Inativos ({dias_min}-{dias_max}d)", len(inativos),
+                delta=f"⚠️ {pct}% da carteira", delta_type="warn"), unsafe_allow_html=True)
+            with c3: st.markdown(kpi("Ativos Recentes", resumo.get("ativos",0),
                 delta="✓ Compraram recentemente", delta_type="up"), unsafe_allow_html=True)
-            valor_risco = sum(c.get("total_historico",0) for c in inativos)
             with c4: st.markdown(kpi("Receita em Risco", fmt_brl(valor_risco),
                 delta="⚠️ Valor histórico", delta_type="warn"), unsafe_allow_html=True)
 
