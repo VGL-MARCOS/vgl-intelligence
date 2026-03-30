@@ -403,7 +403,7 @@ elif pagina == "👥 Clientes Inativos":
         <h1>👥 Clientes Inativos</h1>
         <p>Clientes que pararam de comprar — estratégia de reativação</p></div>""", unsafe_allow_html=True)
 
-    dias = st.slider("Considerar inativo após X dias sem comprar", 30, 180, 60, 10)
+    dias = st.slider("Considerar inativo após X dias sem comprar", 30, 90, 30, 10)
 
     c1, c2 = st.columns([1,3])
     with c1:
