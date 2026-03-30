@@ -437,26 +437,19 @@ def prompt_auditoria_compras(dados_compras: dict, periodo: str) -> str:
     for d in ocs_diretas_raw:
         oc = d.get("ordemCompraMestreResumida", d)
         forn = (oc.get("fornecedorResumido") or {})
+        itens = oc.get("itens") or []
         ocs_detalhadas.append({
-            "id":           oc.get("id"),
-            "data":         oc.get("dataOrdemCompra"),
-            "fornecedor":   forn.get("nomeRazao") or forn.get("nomeFantasia","?"),
-            "cnpj":         forn.get("cnpj",""),
-            "descricao":    oc.get("descricao",""),
-            "valor":        oc.get("valorTotalCompras", 0),
-            "situacao":     oc.get("descricaoSituacao",""),
-            "entrega":      oc.get("descricaoSituacaoEntrega",""),
-            "comprador":    (oc.get("compradorResumido") or {}).get("nomeCompleto",""),
-            "prazo_entrega":oc.get("descricaoPrazoEntrega",""),
-            "itens": [
-                {
-                    "material": (i.get("materialResumido") or {}).get("descricao","?"),
-                    "qtde":     i.get("quantidade"),
-                    "valor":    i.get("valorTotal"),
-                }
-                for i in (oc.get("itens") or [])
-            ]
+            "id":        oc.get("id"),
+            "data":      oc.get("dataOrdemCompra","")[:10],
+            "fornecedor":forn.get("nomeRazao") or forn.get("nomeFantasia","?"),
+            "cnpj":      forn.get("cnpj",""),
+            "materiais": ", ".join((i.get("materialResumido") or {}).get("descricao","?") for i in itens[:3]),
+            "valor":     oc.get("valorTotalCompras", 0),
+            "comprador": (oc.get("compradorResumido") or {}).get("nomeCompleto",""),
+            "entrega":   oc.get("descricaoSituacaoEntrega",""),
         })
+    # Ordena por valor desc e limita a 50 para não estourar tokens
+    ocs_detalhadas.sort(key=lambda x: x["valor"] or 0, reverse=True)
 
     # Requisições sem cotação detalhadas
     reqs_sem_cot = []
@@ -465,18 +458,16 @@ def prompt_auditoria_compras(dados_compras: dict, periodo: str) -> str:
             req = req_wrapper.get("solicitacaoMaterialMestreResumido", {})
             ocs = req_wrapper.get("ordemCompraMestreResumidaList", [])
             valor_oc = sum(o.get("valorTotalCompras",0) or 0 for o in ocs)
+            itens = req.get("listSolicitacaoItens") or []
             reqs_sem_cot.append({
-                "id":          req.get("id"),
-                "data":        req.get("dataSolicitacao"),
-                "solicitante": (req.get("funcionarioSolicitacao") or {}).get("nome","?"),
-                "comprador":   (req.get("comprador") or {}).get("nomeCompleto",""),
-                "situacao":    req.get("situacao",""),
-                "valor_oc":    valor_oc,
-                "materiais": [
-                    (i.get("materialResumido") or {}).get("descricao","?")
-                    for i in (req.get("listSolicitacaoItens") or [])
-                ]
+                "id":        req.get("id"),
+                "data":      str(req.get("dataSolicitacao",""))[:10],
+                "solicitante":(req.get("funcionarioSolicitacao") or {}).get("nome","?"),
+                "comprador": (req.get("comprador") or {}).get("nomeCompleto",""),
+                "materiais": ", ".join((i.get("materialResumido") or {}).get("descricao","?") for i in itens[:3]),
+                "valor_oc":  valor_oc,
             })
+    reqs_sem_cot.sort(key=lambda x: x["valor_oc"] or 0, reverse=True)
 
     return f"""
 Você é um auditor de compras sênior — BRITAGEM VOGELSANGER LTDA.
@@ -495,13 +486,13 @@ Valor total comprado:     R$ {res['valor_total_comprado']:,.2f}
   Descontos:              R$ {res['valor_desconto']:,.2f}
 Ticket médio OC:          R$ {res['ticket_medio_oc']:,.2f}
 
-═══ LISTA COMPLETA — OCs SEM REQUISIÇÃO/COTAÇÃO (BYPASS) ═══
-Total: {len(ocs_detalhadas)} OCs | Valor: R$ {sum(o['valor'] or 0 for o in ocs_detalhadas):,.2f}
-{_s(ocs_detalhadas, 999)}
+═══ OCs SEM REQUISIÇÃO/COTAÇÃO — TOP 50 POR VALOR ═══
+Total geral: {len(ocs_detalhadas)} OCs | Valor total: R$ {sum(o['valor'] or 0 for o in ocs_detalhadas):,.2f}
+{_s(ocs_detalhadas[:50], 999)}
 
-═══ LISTA COMPLETA — REQUISIÇÕES SEM COTAÇÃO ═══
-Total: {len(reqs_sem_cot)} requisições
-{_s(reqs_sem_cot, 999)}
+═══ REQUISIÇÕES SEM COTAÇÃO — TOP 30 POR VALOR ═══
+Total geral: {len(reqs_sem_cot)} requisições
+{_s(reqs_sem_cot[:30], 999)}
 
 ═══ TOP 15 FORNECEDORES ═══
 {_s(res['top_15_fornecedores'], 999)}
