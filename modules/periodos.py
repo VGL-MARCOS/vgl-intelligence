@@ -135,3 +135,23 @@ class Periodos:
         if inicio == fim:
             return fmt(inicio)
         return f"{fmt(inicio)} a {fmt(fim)}"
+
+    @staticmethod
+    def ultimos_n_meses(n: int) -> tuple:
+        hoje  = datetime.now()
+        fim   = hoje.strftime("%Y-%m-%d")
+        mes   = hoje.month - n
+        ano   = hoje.year
+        while mes <= 0:
+            mes += 12
+            ano -= 1
+        inicio = datetime(ano, mes, 1).strftime("%Y-%m-%d")
+        return inicio, fim
+
+    @staticmethod
+    def ano_atual() -> tuple:
+        hoje   = datetime.now()
+        inicio = hoje.replace(month=1, day=1).strftime("%Y-%m-%d")
+        fim    = hoje.strftime("%Y-%m-%d")
+        return inicio, fim
+

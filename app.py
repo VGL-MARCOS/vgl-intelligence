@@ -123,7 +123,6 @@ def _clientes_inativos(dias):
 # ── Períodos ──
 def resolver_periodo(tipo, data_ini=None, data_fim=None):
     from modules.periodos import Periodos
-    hoje = datetime.now()
     if tipo == "Mês atual":        return Periodos.mes_atual()
     if tipo == "Mês anterior":     return Periodos.mes_anterior()
     if tipo == "Últimos 7 dias":   return Periodos.ultimos_7_dias()
@@ -133,7 +132,7 @@ def resolver_periodo(tipo, data_ini=None, data_fim=None):
     if tipo == "Ano atual":        return Periodos.ano_atual()
     if tipo == "Personalizado" and data_ini and data_fim:
         return data_ini.strftime("%Y-%m-%d"), data_fim.strftime("%Y-%m-%d")
-    return Periodos.mes_atual()
+    return Periodos.mes_atual()  # fallback seguro
 
 def fmt_label(inicio, fim):
     fi = datetime.strptime(inicio, "%Y-%m-%d").strftime("%d/%m/%Y")
@@ -297,24 +296,59 @@ if pagina == "🏠 Painel Geral":
 #  VENDAS
 # ════════════════════════════════════════
 elif pagina == "🛍️ Vendas":
-    st.markdown(f"""<div class="main-header">
-        <h1>🛍️ Vendas</h1>
-        <p>Pedidos e orçamentos · {label_periodo} · máx 200 registros</p></div>""", unsafe_allow_html=True)
+    st.markdown("""<div class="main-header"><h1>🛍️ Vendas</h1><p>Pedidos e performance comercial</p></div>""", unsafe_allow_html=True)
 
-    c_btn, c_info = st.columns([1,3])
+    # Seletor de periodo especifico para vendas
+    from modules.periodos import Periodos
+    col_p1, col_p2, col_p3 = st.columns([2, 1, 1])
+    with col_p1:
+        tipo_v = st.selectbox("Periodo", [
+            "Mes atual", "Mes anterior", "Ultimos 30 dias",
+            "Ultimos 3 meses", "Ultimos 6 meses",
+            "Ano atual", "Ano anterior", "Personalizado",
+        ], label_visibility="collapsed", key="vendas_periodo_tipo")
+    with col_p2:
+        ini_v = st.date_input("De", value=datetime.now().replace(day=1), key="v_ini") if tipo_v == "Personalizado" else None
+    with col_p3:
+        fim_v = st.date_input("Ate", value=datetime.now(), key="v_fim") if tipo_v == "Personalizado" else None
+
+    if tipo_v == "Mes atual":        v_inicio, v_fim = Periodos.mes_atual()
+    elif tipo_v == "Mes anterior":   v_inicio, v_fim = Periodos.mes_anterior()
+    elif tipo_v == "Ultimos 30 dias":v_inicio, v_fim = Periodos.ultimos_30_dias()
+    elif tipo_v == "Ultimos 3 meses":v_inicio, v_fim = Periodos.ultimos_n_meses(3)
+    elif tipo_v == "Ultimos 6 meses":v_inicio, v_fim = Periodos.ultimos_n_meses(6)
+    elif tipo_v == "Ano atual":      v_inicio, v_fim = Periodos.ano_atual()
+    elif tipo_v == "Ano anterior":
+        ano = datetime.now().year - 1
+        v_inicio, v_fim = f"{ano}-01-01", f"{ano}-12-31"
+    elif tipo_v == "Personalizado" and ini_v and fim_v:
+        v_inicio = ini_v.strftime("%Y-%m-%d")
+        v_fim    = fim_v.strftime("%Y-%m-%d")
+    else:
+        v_inicio, v_fim = Periodos.mes_atual()
+
+    v_label = fmt_label(v_inicio, v_fim)
+    st.caption(f"📆 {v_label}")
+
+    # Limpa cache se periodo mudou
+    if st.session_state.get("v_periodo") != v_label:
+        st.session_state.pop("v_pedidos", None)
+        st.session_state.pop("v_orc", None)
+
+    c_btn, c_info = st.columns([1, 3])
     with c_btn:
         carregar = st.button("🔄 Carregar Vendas", use_container_width=True)
     with c_info:
-        st.caption("⚡ Carrega até 200 pedidos mais recentes do período.")
+        st.caption("⚡ Carrega ate 200 pedidos do periodo selecionado.")
 
-    if carregar or "v_pedidos" in st.session_state:
-        if carregar:
-            with st.spinner("Buscando pedidos..."):
-                st.session_state["v_pedidos"] = _pedidos(inicio, fim)
-            with st.spinner("Buscando orçamentos..."):
-                st.session_state["v_orc"] = _orcamentos(inicio, fim)
-            st.session_state["v_periodo"] = label_periodo
-    else:
+    if carregar:
+        with st.spinner("Buscando pedidos..."):
+            st.session_state["v_pedidos"] = _pedidos(v_inicio, v_fim)
+        with st.spinner("Buscando orcamentos..."):
+            st.session_state["v_orc"] = _orcamentos(v_inicio, v_fim)
+        st.session_state["v_periodo"] = v_label
+
+    if "v_pedidos" not in st.session_state:
         st.info("👆 Clique em **Carregar Vendas** para buscar os dados.")
         st.stop()
 

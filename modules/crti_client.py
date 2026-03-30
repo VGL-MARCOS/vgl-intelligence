@@ -902,12 +902,19 @@ class CRTIClient:
             params["filtro.idsVendedores"] = ids_vendedores
 
         # Busca primeira página para ter estatísticas rápidas
-        params["limit"] = 200  # limita para não sobrecarregar
+        params["limit"] = 200
         params["page"]  = 0
         dados = self._get("/api/v1/vendas_producao/pedido_material", params)
         items = dados.get("data", [])
         total = dados.get("totalLength", len(items))
         logger.info(f"   Pedidos: {len(items)}/{total} (primeiros 200)")
+
+        # Filtra localmente por data — a API pode retornar registros antigos
+        if data_inicio:
+            items = [p for p in items if (p.get("dataPedido") or "")[:10] >= data_inicio]
+        if data_fim:
+            items = [p for p in items if (p.get("dataPedido") or "")[:10] <= data_fim]
+        logger.info(f"   Após filtro local: {len(items)} pedidos no período")
         return items
 
     # ──────────────────────────────────────────
@@ -973,7 +980,7 @@ class CRTIClient:
     def buscar_clientes_inativos(
         self,
         dias_sem_comprar: int = 60,
-        periodo_historico_dias: int = 365,
+        periodo_historico_dias: int = 730,
     ) -> dict:
         """
         Identifica clientes que compraram no histórico
