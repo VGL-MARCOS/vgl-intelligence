@@ -431,6 +431,10 @@ elif pagina == "👥 Clientes Inativos":
             inativos_todos = dados.get("inativos", [])
             ativos         = dados.get("ativos_recentes", [])
 
+            # Lê filtros do session_state
+            dias_min = st.session_state.get("inat_dias_min", 30)
+            dias_max = st.session_state.get("inat_dias_max", 180)
+
             # Filtra pelo range de dias selecionado
             inativos = [
                 c for c in inativos_todos
