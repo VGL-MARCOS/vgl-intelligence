@@ -427,7 +427,56 @@ Total horas extras: {total_horas_extra}h
 
 def prompt_auditoria_compras(dados_compras: dict, periodo: str) -> str:
     from modules.resumidor import resumir_compras
+    import json
+
     res = resumir_compras(dados_compras)
+
+    # Extrai dados detalhados das OCs diretas para listar individualmente
+    ocs_diretas_raw = dados_compras.get("ordensCompraMestreSemCotacaoOuSemRequisicao", [])
+    ocs_detalhadas = []
+    for d in ocs_diretas_raw:
+        oc = d.get("ordemCompraMestreResumida", d)
+        forn = (oc.get("fornecedorResumido") or {})
+        ocs_detalhadas.append({
+            "id":           oc.get("id"),
+            "data":         oc.get("dataOrdemCompra"),
+            "fornecedor":   forn.get("nomeRazao") or forn.get("nomeFantasia","?"),
+            "cnpj":         forn.get("cnpj",""),
+            "descricao":    oc.get("descricao",""),
+            "valor":        oc.get("valorTotalCompras", 0),
+            "situacao":     oc.get("descricaoSituacao",""),
+            "entrega":      oc.get("descricaoSituacaoEntrega",""),
+            "comprador":    (oc.get("compradorResumido") or {}).get("nomeCompleto",""),
+            "prazo_entrega":oc.get("descricaoPrazoEntrega",""),
+            "itens": [
+                {
+                    "material": (i.get("materialResumido") or {}).get("descricao","?"),
+                    "qtde":     i.get("quantidade"),
+                    "valor":    i.get("valorTotal"),
+                }
+                for i in (oc.get("itens") or [])
+            ]
+        })
+
+    # Requisições sem cotação detalhadas
+    reqs_sem_cot = []
+    for req_wrapper in dados_compras.get("solicitacoesMaterialMestre", []):
+        if not req_wrapper.get("cotacaoMestreResumidoList"):
+            req = req_wrapper.get("solicitacaoMaterialMestreResumido", {})
+            ocs = req_wrapper.get("ordemCompraMestreResumidaList", [])
+            valor_oc = sum(o.get("valorTotalCompras",0) or 0 for o in ocs)
+            reqs_sem_cot.append({
+                "id":          req.get("id"),
+                "data":        req.get("dataSolicitacao"),
+                "solicitante": (req.get("funcionarioSolicitacao") or {}).get("nome","?"),
+                "comprador":   (req.get("comprador") or {}).get("nomeCompleto",""),
+                "situacao":    req.get("situacao",""),
+                "valor_oc":    valor_oc,
+                "materiais": [
+                    (i.get("materialResumido") or {}).get("descricao","?")
+                    for i in (req.get("listSolicitacaoItens") or [])
+                ]
+            })
 
     return f"""
 Você é um auditor de compras sênior — BRITAGEM VOGELSANGER LTDA.
@@ -437,7 +486,7 @@ Período: {periodo}
 ═══ RESUMO DO PIPELINE ═══
 Requisições:              {res['total_requisicoes']}
 Ordens de compra:         {res['total_ocs']}
-OCs sem requisição:       {res['ocs_diretas_sem_req']} ⚠️
+OCs SEM REQUISIÇÃO:       {res['ocs_diretas_sem_req']} ⚠️
 Requisições sem OC:       {res['req_sem_oc']}
 Requisições sem cotação:  {res['req_sem_cotacao']}
 Valor total comprado:     R$ {res['valor_total_comprado']:,.2f}
@@ -446,36 +495,58 @@ Valor total comprado:     R$ {res['valor_total_comprado']:,.2f}
   Descontos:              R$ {res['valor_desconto']:,.2f}
 Ticket médio OC:          R$ {res['ticket_medio_oc']:,.2f}
 
+═══ LISTA COMPLETA — OCs SEM REQUISIÇÃO/COTAÇÃO (BYPASS) ═══
+Total: {len(ocs_detalhadas)} OCs | Valor: R$ {sum(o['valor'] or 0 for o in ocs_detalhadas):,.2f}
+{_s(ocs_detalhadas, 999)}
+
+═══ LISTA COMPLETA — REQUISIÇÕES SEM COTAÇÃO ═══
+Total: {len(reqs_sem_cot)} requisições
+{_s(reqs_sem_cot, 999)}
+
 ═══ TOP 15 FORNECEDORES ═══
 {_s(res['top_15_fornecedores'], 999)}
 
-═══ OCs DIRETAS SEM REQUISIÇÃO ═══
-{_s(res['ocs_diretas_lista'], 999)}
+═══ AMOSTRA DE REQUISIÇÕES COM PROCESSO COMPLETO ═══
+{_s(res['amostra_requisicoes'][:15], 999)}
 
-═══ AMOSTRA DE REQUISIÇÕES ═══
-{_s(res['amostra_requisicoes'], 999)}
+### 1. CONFORMIDADE DO PROCESSO — LISTA DETALHADA DE BYPASS
 
-### 1. CONFORMIDADE DO PROCESSO
-- OCs sem requisição (bypass total)
-- Requisições sem cotação (compra direta)
+**OCs geradas sem requisição/cotação — liste TODAS em tabela:**
+| ID OC | Data | Fornecedor | CNPJ | Materiais | Valor | Comprador | Situação Entrega |
 
-### 2. ANÁLISE DE COTAÇÕES
-- Fornecedores favorecidos sem justificativa
-- OCs para fornecedor mais caro
+Para cada OC liste os itens comprados.
+Agrupe por fornecedor recorrente e identifique padrões.
+Destaque as 10 de maior valor com análise de risco.
 
-### 3. ANÁLISE DAS ORDENS DE COMPRA
-- Lead times, entregas em atraso
-- Materiais pagos e não entregues
+**Requisições sem cotação — liste TODAS:**
+| ID Req | Data | Solicitante | Comprador | Materiais | Valor OC |
+
+Identifique se há concentração em mesmo comprador ou fornecedor.
+
+### 2. ANÁLISE DE RISCO POR FORNECEDOR
+- Fornecedores que aparecem repetidamente no bypass
+- Valor acumulado por fornecedor no bypass
+- Risco de favorecimento
+
+### 3. ANÁLISE DAS ORDENS DE COMPRA REGULARES
+- OCs com entrega em atraso
+- Materiais pagos e não entregues (sem entrada de NF)
+- Lead times médios
 
 ### 4. CONCENTRAÇÃO DE FORNECEDORES
-- Top fornecedores e risco de dependência
+- Top fornecedores e % de concentração
+- Risco de dependência
 
 ### 5. ALERTAS CRÍTICOS
-| RISCO | DESCRIÇÃO | VALOR | AÇÃO |
+| ID | TIPO DE RISCO | FORNECEDOR | VALOR | COMPRADOR | AÇÃO RECOMENDADA |
 
 ### 6. RESUMO EXECUTIVO
-- Score de conformidade: X%
-- Top 3 riscos com maior impacto
+- Score de conformidade: X% (calcule: OCs com processo correto / total OCs)
+- Valor em risco (bypass): R$ X
+- Top 3 riscos com maior impacto financeiro
+- Recomendações prioritárias para regularização
+
+Use R$ em todos os valores. Liste IDs reais das OCs — não generalize.
 """
 
 
