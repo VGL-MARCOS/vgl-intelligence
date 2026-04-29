@@ -135,8 +135,93 @@ def _materiais():
     return get_crti().buscar_materiais(apenas_ativos=False)
 
 @st.cache_data(ttl=7200, show_spinner=False)
-def _clientes_inativos(dias):
-    return get_crti().buscar_clientes_inativos(dias_sem_comprar=dias)
+def _clientes_inativos(dias, periodo_meses=18):
+    """
+    Calcula clientes inativos usando o endpoint de saída analítica (bi/vendas),
+    que tem dados atuais. Fallback para o endpoint legado se falhar.
+    """
+    from datetime import datetime, timedelta
+    import calendar
+
+    hoje    = datetime.now().date()
+    corte   = hoje - timedelta(days=dias)
+    # Busca histórico dos últimos N meses
+    meses_atras = hoje.replace(day=1)
+    for _ in range(periodo_meses - 1):
+        primeiro = meses_atras.replace(day=1)
+        meses_atras = (primeiro - timedelta(days=1)).replace(day=1)
+    inicio_hist = meses_atras.strftime("%Y-%m-%d")
+    fim_hist    = hoje.strftime("%Y-%m-%d")
+
+    try:
+        # Tenta endpoint BI (dados atuais)
+        saidas = get_crti().bi_saida_material_analitico(inicio_hist, fim_hist)
+        if not saidas:
+            raise ValueError("sem dados")
+
+        clientes = {}
+        for s in saidas:
+            cli_id   = s.get("idCliente")
+            cli_nome = s.get("nomeRazaoCliente") or f"ID {cli_id}"
+            if not cli_id:
+                continue
+            try:
+                data_s = datetime.strptime(str(s.get("data",""))[:10], "%Y-%m-%d").date()
+            except:
+                continue
+            valor = float(s.get("valorTotal", 0) or 0)
+            peso  = float(s.get("pesoLiquido", 0) or 0)
+
+            if cli_id not in clientes:
+                clientes[cli_id] = {
+                    "id": cli_id, "nome": cli_nome,
+                    "cnpj": s.get("documentoCliente",""),
+                    "ultima_compra": data_s, "primeira_compra": data_s,
+                    "total_historico": 0, "qtde_pedidos": 0,
+                    "peso_total_ton": 0,
+                }
+            c = clientes[cli_id]
+            c["total_historico"] += valor
+            c["qtde_pedidos"]    += 1
+            c["peso_total_ton"]  += peso / 1000
+            if data_s > c["ultima_compra"]:  c["ultima_compra"]  = data_s
+            if data_s < c["primeira_compra"]: c["primeira_compra"] = data_s
+
+    except Exception:
+        # Fallback: endpoint legado
+        return get_crti().buscar_clientes_inativos(dias_sem_comprar=dias)
+
+    inativos, ativos = [], []
+    for c in clientes.values():
+        dias_sem = (hoje - c["ultima_compra"]).days
+        c["dias_sem_comprar"]  = dias_sem
+        c["ultima_compra"]     = c["ultima_compra"].isoformat()
+        c["primeira_compra"]   = c["primeira_compra"].isoformat()
+        c["total_historico"]   = round(c["total_historico"], 2)
+        c["peso_total_ton"]    = round(c["peso_total_ton"], 1)
+        c["ticket_medio"]      = round(c["total_historico"] / c["qtde_pedidos"], 2) if c["qtde_pedidos"] else 0
+        if c["ultima_compra"] < corte.isoformat():
+            inativos.append(c)
+        else:
+            ativos.append(c)
+
+    inativos.sort(key=lambda x: x["dias_sem_comprar"], reverse=True)
+    ativos.sort(key=lambda x: x["total_historico"], reverse=True)
+    total = len(clientes)
+
+    return {
+        "inativos": inativos,
+        "ativos_recentes": ativos,
+        "fonte": "saida_analitica",
+        "periodo_historico": f"{inicio_hist} a {fim_hist}",
+        "resumo": {
+            "total_clientes": total,
+            "inativos": len(inativos),
+            "ativos": len(ativos),
+            "pct_inativo": round(len(inativos)/total*100, 1) if total else 0,
+            "dias_corte": dias,
+        }
+    }
 
 # Novos endpoints BI
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -2098,10 +2183,18 @@ elif pagina == "👥 Clientes Inativos":
             resumo   = dados.get("resumo", {})
             inativos = dados.get("inativos", [])
             ativos   = dados.get("ativos_recentes", [])
+            fonte    = dados.get("fonte", "legado")
+            periodo  = dados.get("periodo_historico", "")
             valor_risco = sum(c.get("total_historico",0) for c in inativos)
+            peso_risco  = sum(c.get("peso_total_ton",0) for c in inativos)
             pct = round(len(inativos)/resumo.get("total_clientes",1)*100,1) if resumo.get("total_clientes") else 0
 
-            c1,c2,c3,c4 = st.columns(4)
+            if fonte == "saida_analitica":
+                st.success(f"✅ Dados atuais via saída analítica | Período: {periodo}")
+            else:
+                st.warning("⚠️ Usando dados legados — podem estar desatualizados")
+
+            c1,c2,c3,c4,c5 = st.columns(5)
             with c1: st.markdown(kpi("Total Clientes", resumo.get("total_clientes",0)), unsafe_allow_html=True)
             with c2: st.markdown(kpi(f"Inativos +{dias}d", len(inativos),
                 delta=f"⚠️ {pct}% da carteira", delta_type="warn"), unsafe_allow_html=True)
@@ -2109,6 +2202,8 @@ elif pagina == "👥 Clientes Inativos":
                 delta="✓ Compraram recentemente", delta_type="up"), unsafe_allow_html=True)
             with c4: st.markdown(kpi("Receita em Risco", fmt_brl_m(valor_risco),
                 delta="⚠️ Valor histórico", delta_type="warn"), unsafe_allow_html=True)
+            with c5: st.markdown(kpi("Peso em Risco (ton)", f"{peso_risco:,.0f}",
+                delta="Toneladas sem comprar"), unsafe_allow_html=True)
 
             ca, cb = st.columns(2)
             with ca:
@@ -2145,7 +2240,7 @@ elif pagina == "👥 Clientes Inativos":
                 df3["total_historico"] = df3["total_historico"].apply(fmt_brl)
                 df3["ticket_medio"]    = df3["ticket_medio"].apply(fmt_brl)
                 cols = [c for c in ["nome","ultima_compra","dias_sem_comprar",
-                                    "total_historico","qtde_pedidos","ticket_medio"] if c in df3.columns]
+                                    "total_historico","peso_total_ton","qtde_pedidos","ticket_medio"] if c in df3.columns]
                 st.dataframe(df3[cols], use_container_width=True, height=400)
                 csv = df3[cols].to_csv(index=False).encode("utf-8-sig")
                 st.download_button("⬇️ Exportar CSV", csv, "clientes_inativos.csv", "text/csv")
