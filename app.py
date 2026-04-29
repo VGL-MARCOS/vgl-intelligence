@@ -331,83 +331,234 @@ with st.sidebar:
 
 
 # ════════════════════════════════════════
-#  PAINEL EXECUTIVO
+#  PAINEL EXECUTIVO CUSTOMIZÁVEL
 # ════════════════════════════════════════
+
+# ── Widgets disponíveis ──
+WIDGETS_DISPONIVEIS = {
+    "kpis_frota":       "🚜 KPIs de Frota (equip., OS, seguros)",
+    "kpis_financeiro":  "💰 KPIs Financeiros (docs, valor)",
+    "kpis_eficiencia":  "⚙️ KPI Eficiência média da frota",
+    "os_situacao":      "🔧 Gráfico: OS por Situação",
+    "top_fornecedores": "🏭 Gráfico: Top Fornecedores",
+    "alertas":          "⚠️ Painel de Alertas",
+    "faturamento_kpi":  "📈 KPI Faturamento do período",
+    "eficiencia_graf":  "⚙️ Gráfico: Eficiência por equipamento",
+    "combustivel_kpi":  "⛽ KPI Combustível (desvios)",
+    "custos_kpi":       "🏗️ KPI Custos por filial",
+    "navegacao":        "🗺️ Atalhos de Navegação Rápida",
+}
+
+# ── Padrão se nunca configurou ──
+WIDGETS_PADRAO = ["kpis_frota","kpis_financeiro","os_situacao",
+                   "top_fornecedores","alertas","navegacao"]
+
+# ── Lê preferências salvas (session_state) ──
+if "painel_widgets" not in st.session_state:
+    st.session_state["painel_widgets"] = WIDGETS_PADRAO.copy()
+
 if pagina == "🏠 Painel Executivo":
-    st.markdown(f"""<div class="main-header">
+    # ── Configuração na sidebar (só quando no painel) ──
+    with st.sidebar:
+        st.divider()
+        with st.expander("⚙️ Configurar Painel"):
+            st.caption("Escolha os widgets visíveis:")
+            novos = []
+            for chave, label in WIDGETS_DISPONIVEIS.items():
+                ativo = st.checkbox(label, value=(chave in st.session_state["painel_widgets"]),
+                                    key=f"chk_{chave}")
+                if ativo:
+                    novos.append(chave)
+            if st.button("💾 Salvar layout", use_container_width=True):
+                st.session_state["painel_widgets"] = novos
+                st.success("Layout salvo!")
+                st.rerun()
+            if st.button("↩️ Restaurar padrão", use_container_width=True):
+                st.session_state["painel_widgets"] = WIDGETS_PADRAO.copy()
+                st.rerun()
+
+    W = st.session_state["painel_widgets"]
+
+    st.markdown(f'''<div class="main-header">
         <h1>📊 Painel Executivo</h1>
-        <p>Visão consolidada · {label_periodo}</p></div>""", unsafe_allow_html=True)
+        <p>Visão consolidada · {label_periodo} · <span style="font-size:.8rem;opacity:.7">{len(W)} widgets ativos</span></p></div>''', unsafe_allow_html=True)
 
-    col_f, col_c = st.columns([2,1])
-    with col_f:
-        with st.spinner("Carregando..."):
+    # ── Carrega dados base (sempre) ──
+    with st.spinner("Carregando dados..."):
+        try:
+            from resumidor import resumir_equipamentos, resumir_os_manutencao, resumir_transferencias
+            equip = _equipamentos()
+            os_l  = _os_legado(inicio, fim)
+            trf   = _transferencias(inicio, fim)
+            re = resumir_equipamentos(equip)
+            ro = resumir_os_manutencao(os_l)
+            rt = resumir_transferencias(trf)
+            dados_base_ok = True
+        except Exception:
+            dados_base_ok = False
+
+    # ── KPIs FROTA ──
+    if "kpis_frota" in W and dados_base_ok:
+        c1,c2,c3 = st.columns(3)
+        with c1: st.markdown(kpi("Equipamentos", re["total_equipamentos"]), unsafe_allow_html=True)
+        with c2: st.markdown(kpi("OS Período", ro["total_os"],
+            delta=f"⚠️ {ro['os_atrasadas']} atrasadas" if ro["os_atrasadas"] else "✓ OK",
+            delta_type="warn" if ro["os_atrasadas"] else "up"), unsafe_allow_html=True)
+        with c3: st.markdown(kpi("Seguros Vencidos", re["seguros_vencidos"],
+            delta="⚠️ Urgente" if re["seguros_vencidos"] else "✓ OK",
+            delta_type="warn" if re["seguros_vencidos"] else "up"), unsafe_allow_html=True)
+
+    # ── KPIs FINANCEIRO ──
+    if "kpis_financeiro" in W and dados_base_ok:
+        c4,c5 = st.columns(2)
+        with c4: st.markdown(kpi("Docs Financeiros", rt["total_documentos"]), unsafe_allow_html=True)
+        with c5: st.markdown(kpi("Valor Período", fmt_brl_m(rt["valor_total_emitido"])), unsafe_allow_html=True)
+
+    # ── KPI EFICIÊNCIA ──
+    if "kpis_eficiencia" in W:
+        try:
+            ef = _eficiencia()
+            if ef:
+                ef_med = sum(float(d.get("eficiencia",0) or 0) for d in ef) / len(ef)
+                baixa  = sum(1 for d in ef if float(d.get("eficiencia",0) or 0) < 0.75)
+                st.markdown(kpi("Eficiência Média Frota", fmt_pct(ef_med*100),
+                    delta=f"⚠️ {baixa} equip. abaixo de 75%" if baixa else "✓ OK",
+                    delta_type="warn" if baixa else "up"), unsafe_allow_html=True)
+        except Exception:
+            pass
+
+    # ── KPI FATURAMENTO ──
+    if "faturamento_kpi" in W:
+        try:
+            fat = _faturamento(inicio, fim)
+            if fat:
+                tot_fat = sum(float(f.get("valorBruto",0) or 0) for f in fat)
+                tot_liq = sum(float(f.get("valorLiquido",0) or 0) for f in fat)
+                c_f1, c_f2 = st.columns(2)
+                with c_f1: st.markdown(kpi("Faturamento Bruto", fmt_brl_m(tot_fat)), unsafe_allow_html=True)
+                with c_f2: st.markdown(kpi("Faturamento Líquido", fmt_brl_m(tot_liq)), unsafe_allow_html=True)
+        except Exception:
+            pass
+
+    # ── KPI COMBUSTÍVEL ──
+    if "combustivel_kpi" in W:
+        try:
+            comb = _combustivel()
+            if comb:
+                acima = [d for d in comb if d.get("mediaObtida") and d.get("mediaDesejada")
+                         and float(d.get("mediaObtida",0)) > float(d.get("mediaDesejada",0)) * 1.15]
+                st.markdown(kpi("Equip. Combustível Acima do Padrão", len(acima),
+                    delta="⚠️ Consumindo 15%+ acima" if acima else "✓ Todos no padrão",
+                    delta_type="warn" if acima else "up"), unsafe_allow_html=True)
+        except Exception:
+            pass
+
+    # ── KPI CUSTOS ──
+    if "custos_kpi" in W:
+        try:
+            cst = _custos_filial()
+            if cst:
+                mg_vals = [float(d.get("percentualLucroProposta",0) or 0) for d in cst if d.get("percentualLucroProposta")]
+                mg_med  = sum(mg_vals)/len(mg_vals) if mg_vals else 0
+                st.markdown(kpi("Margem Média Filiais", fmt_pct(mg_med),
+                    delta="⚠️ Abaixo de 5%" if mg_med < 5 else "✓ OK",
+                    delta_type="warn" if mg_med < 5 else "up"), unsafe_allow_html=True)
+        except Exception:
+            pass
+
+    # ── SEPARADOR ──
+    if any(w in W for w in ["kpis_frota","kpis_financeiro","kpis_eficiencia","faturamento_kpi","combustivel_kpi","custos_kpi"]):
+        st.divider()
+
+    # ── LINHA DE GRÁFICOS ──
+    graficos = [w for w in ["os_situacao","top_fornecedores","eficiencia_graf"] if w in W]
+    if graficos and dados_base_ok:
+        cols_graf = st.columns(min(len(graficos), 2))
+        gi = 0
+
+        if "os_situacao" in W and gi < len(cols_graf):
+            with cols_graf[gi]:
+                st.subheader("🔧 OS por Situação")
+                if ro["por_situacao"]:
+                    df = pd.DataFrame(list(ro["por_situacao"].items()), columns=["Situação","Qtde"])
+                    fig = px.bar(df, x="Situação", y="Qtde", color="Qtde",
+                                 color_continuous_scale=["#BDD0F0","#1A3C6E"], template="plotly_white")
+                    fig.update_layout(showlegend=False, margin=dict(t=10,b=10))
+                    st.plotly_chart(fig, use_container_width=True)
+            gi += 1
+
+        if "top_fornecedores" in W and gi < len(cols_graf):
+            with cols_graf[gi]:
+                st.subheader("🏭 Top Fornecedores")
+                if rt["top_15_fornecedores"]:
+                    df2 = pd.DataFrame(rt["top_15_fornecedores"][:10])
+                    df2["vf"] = df2["valor"].apply(fmt_brl)
+                    fig2 = px.bar(df2, x="valor", y="fornecedor", orientation="h",
+                                  text="vf", color_discrete_sequence=["#1A3C6E"], template="plotly_white")
+                    fig2.update_layout(showlegend=False, margin=dict(t=10))
+                    st.plotly_chart(fig2, use_container_width=True)
+            gi += 1
+
+        if "eficiencia_graf" in W:
             try:
-                from resumidor import resumir_equipamentos, resumir_os_manutencao, resumir_transferencias
-                equip = _equipamentos()
-                os_l  = _os_legado(inicio, fim)
-                trf   = _transferencias(inicio, fim)
-                re = resumir_equipamentos(equip)
-                ro = resumir_os_manutencao(os_l)
-                rt = resumir_transferencias(trf)
+                ef = _eficiencia()
+                if ef:
+                    col_ef = st.columns(1)[0]
+                    with col_ef:
+                        st.subheader("⚙️ Eficiência por Equipamento")
+                        df_ef = pd.DataFrame([{
+                            "Equipamento": (d.get("equipamentoResumido") or {}).get("descricao","?")[:20],
+                            "Eficiência %": float(d.get("eficiencia",0) or 0)*100,
+                        } for d in ef]).sort_values("Eficiência %").tail(15)
+                        fig_ef = px.bar(df_ef, x="Eficiência %", y="Equipamento", orientation="h",
+                                        color="Eficiência %",
+                                        color_continuous_scale=["#C0392B","#F39C12","#0A6E3F"],
+                                        template="plotly_white")
+                        fig_ef.add_vline(x=80, line_dash="dash", line_color="orange")
+                        fig_ef.update_layout(showlegend=False)
+                        st.plotly_chart(fig_ef, use_container_width=True)
+            except Exception:
+                pass
 
-                c1,c2,c3,c4,c5 = st.columns(5)
-                with c1: st.markdown(kpi("Equipamentos", re["total_equipamentos"]), unsafe_allow_html=True)
-                with c2: st.markdown(kpi("OS Período", ro["total_os"],
-                    delta=f"⚠️ {ro['os_atrasadas']} atrasadas" if ro["os_atrasadas"] else "✓ OK",
-                    delta_type="warn" if ro["os_atrasadas"] else "up"), unsafe_allow_html=True)
-                with c3: st.markdown(kpi("Seguros Vencidos", re["seguros_vencidos"],
-                    delta="⚠️ Urgente" if re["seguros_vencidos"] else "✓ OK",
-                    delta_type="warn" if re["seguros_vencidos"] else "up"), unsafe_allow_html=True)
-                with c4: st.markdown(kpi("Docs Financeiros", rt["total_documentos"]), unsafe_allow_html=True)
-                with c5: st.markdown(kpi("Valor Período", fmt_brl_m(rt["valor_total_emitido"])), unsafe_allow_html=True)
+    # ── ALERTAS ──
+    if "alertas" in W and dados_base_ok:
+        st.subheader("⚠️ Alertas")
+        alertas = []
+        if re["seguros_vencidos"]:    alertas.append(("err",  f"🔴 {re['seguros_vencidos']} seguro(s) vencido(s)"))
+        if ro["os_atrasadas"]:        alertas.append(("warn", f"🟡 {ro['os_atrasadas']} OS com prazo vencido"))
+        if re["sem_num_patrimonial"]: alertas.append(("warn", f"🟡 {re['sem_num_patrimonial']} equip. sem nº patrimonial"))
 
-                st.divider()
-                ca, cb = st.columns(2)
-                with ca:
-                    st.subheader("OS por Situação")
-                    if ro["por_situacao"]:
-                        df = pd.DataFrame(list(ro["por_situacao"].items()), columns=["Situação","Qtde"])
-                        fig = px.bar(df, x="Situação", y="Qtde", color="Qtde",
-                                     color_continuous_scale=["#BDD0F0","#1A3C6E"], template="plotly_white")
-                        fig.update_layout(showlegend=False, margin=dict(t=10,b=10))
-                        st.plotly_chart(fig, use_container_width=True)
-                with cb:
-                    st.subheader("Top Fornecedores")
-                    if rt["top_15_fornecedores"]:
-                        df2 = pd.DataFrame(rt["top_15_fornecedores"][:10])
-                        df2["vf"] = df2["valor"].apply(fmt_brl)
-                        fig2 = px.bar(df2, x="valor", y="fornecedor", orientation="h",
-                                      text="vf", color_discrete_sequence=["#1A3C6E"], template="plotly_white")
-                        fig2.update_layout(showlegend=False, margin=dict(t=10))
-                        st.plotly_chart(fig2, use_container_width=True)
+        # Alertas dos novos módulos
+        try:
+            comb = _combustivel()
+            acima = [d for d in comb if d.get("mediaObtida") and d.get("mediaDesejada")
+                     and float(d.get("mediaObtida",0)) > float(d.get("mediaDesejada",0)) * 1.20]
+            if acima: alertas.append(("warn", f"🟡 {len(acima)} equipamento(s) com consumo 20%+ acima do padrão"))
+        except Exception: pass
 
-                st.subheader("⚠️ Alertas")
-                alertas = []
-                if re["seguros_vencidos"]:    alertas.append(("err",  f"🔴 {re['seguros_vencidos']} seguro(s) vencido(s)"))
-                if ro["os_atrasadas"]:        alertas.append(("warn", f"🟡 {ro['os_atrasadas']} OS com prazo vencido"))
-                if re["sem_num_patrimonial"]: alertas.append(("warn", f"🟡 {re['sem_num_patrimonial']} equip. sem nº patrimonial"))
-                if not alertas:               alertas.append(("ok",   "✅ Nenhum alerta crítico"))
-                for t, m in alertas:
-                    st.markdown(f'<div class="alert-box {t}">{m}</div>', unsafe_allow_html=True)
-            except Exception as e:
-                st.error(f"Erro: {e}")
+        if not alertas: alertas.append(("ok", "✅ Nenhum alerta crítico"))
+        for t, m in alertas:
+            st.markdown(f'<div class="alert-box {t}">{m}</div>', unsafe_allow_html=True)
 
-    with col_c:
+    # ── NAVEGAÇÃO ──
+    if "navegacao" in W:
+        st.divider()
         st.subheader("🗺️ Navegação Rápida")
         modulos = [
-            ("💰", "Pendências e Aging", "Contas vencidas"),
-            ("📊", "Fluxo de Caixa", "Previsto vs realizado"),
-            ("📈", "Faturamento Geral", "Receita do período"),
-            ("🛍️", "Vendas com Margem", "Margem por ticket"),
-            ("🏗️", "Custos por Filial", "R$/Ton"),
-            ("⚙️", "Eficiência de Equipamentos", "Disponibilidade"),
-            ("⛽", "Consumo de Combustível", "Média vs padrão"),
-            ("🎯", "KPIs e Cruzamentos", "Análises estratégicas"),
+            ("💰","Pendências e Aging","Contas vencidas"),
+            ("📊","Fluxo de Caixa","Previsto vs realizado"),
+            ("📈","Faturamento Geral","Receita do período"),
+            ("🛍️","Vendas com Margem","Margem por ticket"),
+            ("🏗️","Custos por Filial","R$/Ton"),
+            ("⚙️","Eficiência de Equipamentos","Disponibilidade"),
+            ("⛽","Consumo de Combustível","Média vs padrão"),
+            ("🎯","KPIs e Cruzamentos","Análises estratégicas"),
         ]
-        for emoji, mod, desc in modulos:
-            if st.button(f"{emoji} {mod}", key=f"nav_{mod}", use_container_width=True):
-                st.session_state["pagina_override"] = mod
-            st.caption(f"   {desc}")
+        cols_nav = st.columns(4)
+        for idx, (emoji, mod, desc) in enumerate(modulos):
+            with cols_nav[idx % 4]:
+                st.button(f"{emoji} {mod}", key=f"nav_{mod}", use_container_width=True)
+                st.caption(desc)
 
 
 # ════════════════════════════════════════
