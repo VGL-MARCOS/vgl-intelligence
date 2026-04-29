@@ -34,7 +34,7 @@ def _get_base_url() -> str:
         except Exception:
             return "https://vogelsanger.crti.com.br"
 
-def _autenticar_crti(usuario: str, senha: str) -> dict | None:
+def _autenticar_crti(usuario: str, senha: str):
     """
     Tenta autenticar no CRTI ERP.
     Retorna dict com accessToken e info do usuário, ou None se falhar.
