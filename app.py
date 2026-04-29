@@ -12,6 +12,11 @@ from collections import Counter
 import sys, os, logging
 
 sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "modules"))
+
+# ── AUTH via CRTI ──
+from auth_crti import requer_autenticacao, usuario_atual, logout
+requer_autenticacao()
 
 st.set_page_config(
     page_title="CRTI Intelligence | Vogelsanger",
@@ -224,6 +229,29 @@ def fmt_label(i, f):
 # ════════════════════════════════════════
 #  SIDEBAR
 # ════════════════════════════════════════
+def erro_endpoint(endpoint=""):
+    st.warning(f"""
+⚠️ **Módulo não disponível — sem permissão de acesso**
+
+O endpoint **{endpoint}** retornou erro 403.
+Solicite ao TI do CRTI que libere este endpoint.
+
+Os outros módulos continuam funcionando normalmente.
+""")
+
+def erro_generico(e):
+    msg = str(e)
+    if "403" in msg:
+        erro_endpoint()
+    elif "401" in msg:
+        st.error("❌ Sessão expirada. Faça logout e entre novamente.")
+        if st.button("🚪 Logout"):
+            logout()
+    elif "Connection" in type(e).__name__:
+        st.error("❌ Sem conexão com o CRTI.")
+    else:
+        st.error(f"❌ Erro: {str(e)[:200]}")
+
 with st.sidebar:
     st.markdown("""
     <div style="text-align:center;padding:.5rem 0 1rem;">
@@ -288,10 +316,18 @@ with st.sidebar:
     except:
         st.markdown('<span class="status-warn">⚠ Conectando...</span>', unsafe_allow_html=True)
     st.caption(f"⏰ {datetime.now().strftime('%H:%M:%S')}")
-    if st.button("🔄 Atualizar", use_container_width=True):
-        st.cache_data.clear()
-        st.session_state.pop("filiais_carregadas", None)
-        st.rerun()
+    u = usuario_atual()
+    if u:
+        st.caption(f"👤 {u}")
+    col_a, col_s = st.columns(2)
+    with col_a:
+        if st.button("🔄", use_container_width=True, help="Atualizar dados"):
+            st.cache_data.clear()
+            st.session_state.pop("filiais_carregadas", None)
+            st.rerun()
+    with col_s:
+        if st.button("🚪", use_container_width=True, help="Sair"):
+            logout()
 
 
 # ════════════════════════════════════════
@@ -653,7 +689,7 @@ elif pagina == "📊 Fluxo de Caixa":
             st.subheader("Detalhe por Conta de Fluxo")
             st.dataframe(df, use_container_width=True, height=350)
         except Exception as e:
-            st.error(f"Erro: {e}")
+            erro_generico(e)
 
 
 # ════════════════════════════════════════
@@ -811,7 +847,7 @@ elif pagina == "📈 Faturamento Geral":
                               color_discrete_sequence=["#2C5F9E"], template="plotly_white")
                 st.plotly_chart(fig3, use_container_width=True)
         except Exception as e:
-            st.error(f"Erro: {e}")
+            erro_generico(e)
     else:
         st.info("👆 Clique em **Carregar Faturamento** para buscar os dados.")
 
@@ -935,7 +971,7 @@ elif pagina == "🛍️ Vendas com Margem":
             st.download_button("⬇️ Exportar CSV", data=csv,
                                file_name="saidas_margin.csv", mime="text/csv")
         except Exception as e:
-            st.error(f"Erro: {e}")
+            erro_generico(e)
 
 
 # ════════════════════════════════════════
@@ -1031,7 +1067,7 @@ elif pagina == "🏗️ Custos por Filial":
             df_fil["Margem %"]         = df_fil["Margem %"].apply(fmt_pct)
             st.dataframe(df_fil, use_container_width=True, hide_index=True)
         except Exception as e:
-            st.error(f"Erro: {e}")
+            erro_generico(e)
 
 
 # ════════════════════════════════════════
@@ -1111,7 +1147,7 @@ elif pagina == "📋 Produção Previsto/Realizado":
                     "quantidadeRealizada":"Realizado","desvio_pct":"Desvio %"
                 }), use_container_width=True, height=350)
         except Exception as e:
-            st.error(f"Erro: {e}")
+            erro_generico(e)
 
 
 # ════════════════════════════════════════
@@ -1182,7 +1218,7 @@ elif pagina == "👷 Mão de Obra":
             st.subheader("Dados Completos")
             st.dataframe(df, use_container_width=True, height=350)
         except Exception as e:
-            st.error(f"Erro: {e}")
+            erro_generico(e)
 
 
 # ════════════════════════════════════════
@@ -1246,7 +1282,7 @@ elif pagina == "💸 Despesas Analíticas":
             csv = dfs.to_csv(index=False).encode("utf-8-sig")
             st.download_button("⬇️ Exportar CSV", csv, "despesas.csv", "text/csv")
         except Exception as e:
-            st.error(f"Erro: {e}")
+            erro_generico(e)
 
 
 # ════════════════════════════════════════
@@ -1345,7 +1381,7 @@ elif pagina == "⚙️ Eficiência de Equipamentos":
             csv = dfs.to_csv(index=False).encode("utf-8-sig")
             st.download_button("⬇️ Exportar CSV", csv, "eficiencia.csv", "text/csv")
         except Exception as e:
-            st.error(f"Erro: {e}")
+            erro_generico(e)
 
 
 # ════════════════════════════════════════
@@ -1420,7 +1456,7 @@ elif pagina == "⛽ Consumo de Combustível":
                 else:
                     st.success("✅ Nenhum equipamento com desvio acima de 15%")
         except Exception as e:
-            st.error(f"Erro: {e}")
+            erro_generico(e)
 
 
 # ════════════════════════════════════════
@@ -1588,7 +1624,7 @@ elif pagina == "🚜 Frota — Cadastro":
                 dfs = dfs[mask]
             st.dataframe(dfs, use_container_width=True, height=400)
         except Exception as e:
-            st.error(f"Erro: {e}")
+            erro_generico(e)
 
 
 # ════════════════════════════════════════
@@ -1685,7 +1721,7 @@ elif pagina == "🛒 Compras OC/OS Analítico":
             csv = dfs.to_csv(index=False).encode("utf-8-sig")
             st.download_button("⬇️ Exportar CSV", csv, "compras_oc_os.csv", "text/csv")
         except Exception as e:
-            st.error(f"Erro: {e}")
+            erro_generico(e)
 
 
 # ════════════════════════════════════════
@@ -1963,7 +1999,7 @@ elif pagina == "👥 Clientes Inativos":
                 csv = df3[cols].to_csv(index=False).encode("utf-8-sig")
                 st.download_button("⬇️ Exportar CSV", csv, "clientes_inativos.csv", "text/csv")
         except Exception as e:
-            st.error(f"Erro: {e}")
+            erro_generico(e)
 
 
 elif pagina == "📦 Materiais":
@@ -2009,7 +2045,7 @@ elif pagina == "📦 Materiais":
                 fig2.update_layout(showlegend=False)
                 st.plotly_chart(fig2, use_container_width=True)
         except Exception as e:
-            st.error(f"Erro: {e}")
+            erro_generico(e)
 
 
 # ════════════════════════════════════════
